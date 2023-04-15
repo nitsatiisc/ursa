@@ -265,9 +265,9 @@ mod cl_bench_tests {
 
         #[test]
         fn bench() {
-            let max_cred_num = 10;
+            let max_cred_num = 1000;
             let num_proofs_to_do = 1;
-            let issuance_by_default = false;
+            let issuance_by_default = true;
 
             let sub_proof_request = get_sub_proof_request();
             let (

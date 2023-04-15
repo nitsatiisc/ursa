@@ -46,6 +46,7 @@ impl Verifier {
     pub fn new_proof_verifier() -> UrsaCryptoResult<ProofVerifier> {
         Ok(ProofVerifier {
             credentials: Vec::new(),
+            gen_credentials: Vec::new(),
             common_attributes: HashMap::new(),
         })
     }
@@ -54,6 +55,7 @@ impl Verifier {
 #[derive(Debug)]
 pub struct ProofVerifier {
     credentials: Vec<VerifiableCredential>,
+    gen_credentials: Vec<GenVerifiableCredential>,
     common_attributes: HashMap<String, Option<BigNumber>>,
 }
 
@@ -130,6 +132,85 @@ impl ProofVerifier {
         });
         Ok(())
     }
+
+    /// Generalized function to support multiple revocation types
+    /// This adds a generic credential as part of subproof request
+    ///
+    pub fn add_sub_proof_request_va(
+        &mut self,
+        sub_proof_request: &SubProofRequest,
+        credential_schema: &CredentialSchema,
+        non_credential_schema: &NonCredentialSchema,
+        credential_pub_key: &CredentialPublicKeyVA,
+        rev_key_pub: Option<&RevocationKeyPublicVA>,
+        rev_reg: Option<&RevocationRegistryVA>,
+    ) -> UrsaCryptoResult<()> {
+        ProofVerifier::_check_add_sub_proof_request_params_consistency(
+            sub_proof_request,
+            credential_schema,
+        )?;
+
+        let gen_rev_key_pub = match rev_key_pub.is_some() {
+            true => Some(GenRevocationKeyPublic::VA(rev_key_pub.map(Clone::clone).unwrap())),
+            false => None
+        };
+
+        let gen_rev_reg = match rev_reg.is_some() {
+            true => Some(GenRevocationRegistry::VA(rev_reg.map(Clone::clone).unwrap())),
+            false => None
+        };
+
+        self.gen_credentials.push(GenVerifiableCredential {
+            pub_key: GenCredentialPublicKey::VA(credential_pub_key.try_clone()?),
+            sub_proof_request: sub_proof_request.clone(),
+            credential_schema: credential_schema.clone(),
+            non_credential_schema: non_credential_schema.clone(),
+            rev_key_pub: gen_rev_key_pub,
+            rev_reg: gen_rev_reg,
+        });
+
+        Ok(())
+    }
+
+    /// Add a subproof request for cks credential
+    /// wrapped in a generic credential.
+    pub fn add_sub_proof_request_cks(
+        &mut self,
+        sub_proof_request: &SubProofRequest,
+        credential_schema: &CredentialSchema,
+        non_credential_schema: &NonCredentialSchema,
+        credential_pub_key: &CredentialPublicKey,
+        rev_key_pub: Option<&RevocationKeyPublic>,
+        rev_reg: Option<&RevocationRegistry>,
+    ) -> UrsaCryptoResult<()> {
+        ProofVerifier::_check_add_sub_proof_request_params_consistency(
+            sub_proof_request,
+            credential_schema,
+        )?;
+
+        let gen_rev_key_pub = match rev_key_pub.is_some() {
+            true => Some(GenRevocationKeyPublic::CKS(rev_key_pub.map(Clone::clone).unwrap())),
+            false => None
+        };
+
+        let gen_rev_reg = match rev_reg.is_some() {
+            true => Some(GenRevocationRegistry::CKS(rev_reg.map(Clone::clone).unwrap())),
+            false => None
+        };
+
+        self.gen_credentials.push(GenVerifiableCredential {
+            pub_key: GenCredentialPublicKey::CKS(credential_pub_key.try_clone()?),
+            sub_proof_request: sub_proof_request.clone(),
+            credential_schema: credential_schema.clone(),
+            non_credential_schema: non_credential_schema.clone(),
+            rev_key_pub: gen_rev_key_pub,
+            rev_reg: gen_rev_reg,
+        });
+
+        Ok(())
+    }
+
+
 
     /// Verifies proof.
     ///
@@ -308,6 +389,8 @@ impl ProofVerifier {
         values.extend_from_slice(&proof.aggregated_proof.c_list);
         values.push(nonce.to_bytes()?);
 
+
+
         let c_hver = get_hash_as_int(&values)?;
 
         info!(target: "anoncreds_service", "Verifier verify proof -> done");
@@ -318,6 +401,143 @@ impl ProofVerifier {
 
         Ok(valid)
     }
+
+    /// Generic Verification Function
+    ///
+    ///
+    pub fn verify_generic(&mut self, proof: &GenProof, nonce: &Nonce) -> UrsaCryptoResult<bool> {
+
+
+        //ProofVerifier::_check_verify_params_consistency(&self.credentials, proof)?;
+
+        let mut tau_list: Vec<Vec<u8>> = Vec::new();
+
+        for idx in 0..proof.proofs.len() {
+            let proof_item = &proof.proofs[idx];
+            let credential = &self.gen_credentials[idx];
+            let cred_primary_key = match &credential.pub_key {
+                GenCredentialPublicKey::CKS(cred_pub_key_cks) => { &cred_pub_key_cks.p_key }
+                GenCredentialPublicKey::VA(cred_pub_key_va) => { &cred_pub_key_va.p_key  }
+            };
+
+
+
+            if proof_item.non_revoc_proof.is_some() {
+                if let (
+                    Some(GenNonRevocProof::CKS(non_revoc_proof_cks)),
+                    GenCredentialPublicKey::CKS(ref cred_public_key),
+                    Some(GenRevocationKeyPublic::CKS(rev_pub_key_cks)),
+                    Some(GenRevocationRegistry::CKS(rev_reg_cks))
+                ) = (
+                    proof_item.non_revoc_proof.as_ref(),
+                    &credential.pub_key,
+                    credential.rev_key_pub.as_ref(),
+                    credential.rev_reg.as_ref()
+                ) {
+                    tau_list.extend_from_slice(
+                    &ProofVerifier::_verify_non_revocation_proof(
+                        cred_public_key.r_key.as_ref().unwrap(),
+                        rev_reg_cks,
+                        rev_pub_key_cks,
+                        &proof.aggregated_proof.c_hash,
+                        non_revoc_proof_cks,
+                    )?.as_slice()?);
+                }
+
+                if let (
+                    Some(GenNonRevocProof::VA(non_revoc_proof_va)),
+                    GenCredentialPublicKey::VA(ref cred_public_key),
+                    Some(GenRevocationKeyPublic::VA(rev_pub_key_va)),
+                    Some(GenRevocationRegistry::VA(rev_reg_va))
+                ) = (
+                    proof_item.non_revoc_proof.as_ref(),
+                    &credential.pub_key,
+                    credential.rev_key_pub.as_ref(),
+                    credential.rev_reg.as_ref()
+                ) {
+                    tau_list.extend_from_slice(
+                        &ProofVerifier::_verify_non_revocation_proof_va(
+                            cred_public_key.r_key.as_ref().unwrap(),
+                            rev_reg_va,
+                            rev_pub_key_va,
+                            &proof.aggregated_proof.c_hash,
+                            non_revoc_proof_va,
+                        )?.as_slice()?);
+                }
+
+
+            } // end of revocation if block
+
+            // Check that `m_hat`s of all common attributes are same. Also `m_hat` for each common attribute must be present in each sub proof
+            let attr_names: Vec<String> = self
+                .common_attributes
+                .keys()
+                .map(|s| s.to_string())
+                .collect();
+            for attr_name in attr_names {
+                if proof_item.primary_proof.eq_proof.m.contains_key(&attr_name) {
+                    let m_hat = &proof_item.primary_proof.eq_proof.m[&attr_name];
+                    match self.common_attributes.entry(attr_name.clone()) {
+                        Entry::Occupied(mut entry) => {
+                            let x = entry.get_mut();
+                            match x {
+                                Some(v) => {
+                                    if v != m_hat {
+                                        return Err(err_msg(
+                                            UrsaCryptoErrorKind::ProofRejected,
+                                            format!("Blinded value for common attribute '{}' different across sub proofs", attr_name),
+                                        ));
+                                    }
+                                }
+                                // For first subproof
+                                None => {
+                                    *x = Some(m_hat.try_clone()?);
+                                }
+                            }
+                        }
+                        // Vacant is not possible because `attr_names` is constructed from keys of `self.common_attributes`
+                        Entry::Vacant(_) => (),
+                    }
+                } else {
+                    // `m_hat` for common attribute not present in sub proof
+                    return Err(err_msg(
+                        UrsaCryptoErrorKind::ProofRejected,
+                        format!(
+                            "Blinded value for common attribute '{}' not found in proof.m",
+                            attr_name
+                        ),
+                    ));
+                }
+            }
+            tau_list.append_vec(&ProofVerifier::_verify_primary_proof(
+                cred_primary_key,
+                &proof.aggregated_proof.c_hash,
+                &proof_item.primary_proof,
+                &credential.credential_schema,
+                &credential.non_credential_schema,
+                &credential.sub_proof_request,
+            )?)?;
+        }
+
+        let mut values: Vec<Vec<u8>> = Vec::new();
+        values.extend_from_slice(&tau_list);
+        values.extend_from_slice(&proof.aggregated_proof.c_list);
+
+        values.push(nonce.to_bytes()?);
+
+
+
+        let c_hver = get_hash_as_int(&values)?;
+
+        info!(target: "anoncreds_service", "Verifier verify proof -> done");
+
+        let valid = c_hver == proof.aggregated_proof.c_hash;
+
+        trace!("ProofVerifier::verify: <<< valid: {:?}", valid);
+
+        Ok(valid)
+    }
+
 
     fn _check_add_sub_proof_request_params_consistency(
         sub_proof_request: &SubProofRequest,
@@ -463,6 +683,7 @@ impl ProofVerifier {
             .cloned()
             .collect::<HashSet<String>>();
 
+
         let t1: BigNumber = calc_teq(
             p_pub_key,
             &proof.a_prime,
@@ -472,7 +693,7 @@ impl ProofVerifier {
             &proof.m2,
             &unrevealed_attrs,
         )?;
-
+        println!("m2, t  {:?}, {:?}", proof.m2, t1);
         let mut ctx = BigNumber::new_context()?;
 
         let mut rar = proof
@@ -499,6 +720,7 @@ impl ProofVerifier {
             .mod_exp(c_hash, &p_pub_key.n, Some(&mut ctx))?;
 
         let t: BigNumber = t1.mod_mul(&t2, &p_pub_key.n, Some(&mut ctx))?;
+        println!("t term verifier: {:?}", t);
 
         trace!("ProofVerifier::_verify_equality: <<< t: {:?}", t);
 
@@ -636,6 +858,48 @@ impl ProofVerifier {
             "ProofVerifier::_verify_non_revocation_proof: <<< non_revoc_proof_tau_list: {:?}",
             non_revoc_proof_tau_list
         );
+
+        non_revoc_proof_tau_list
+    }
+
+    /// Non revocation proof verification for the VA revocation scheme
+    ///
+    ///
+    fn _verify_non_revocation_proof_va(
+        r_pub_key: &CredentialRevocationPublicKeyVA,
+        rev_reg: &RevocationRegistryVA,
+        rev_key_pub: &RevocationKeyPublicVA,
+        c_hash: &BigNumber,
+        proof: &NonRevocProofVA,
+    ) -> UrsaCryptoResult<NonRevocProofTauListVA> {
+
+        let ch_num_z = FieldElement::from_bytes(&c_hash.to_bytes()?).unwrap();
+        println!("challenge v {:?}", ch_num_z.clone());
+        /*
+        let t_hat_expected_values =
+            create_tau_list_expected_values(r_pub_key, rev_reg, rev_key_pub, &proof.c_list)?;
+        let t_hat_calc_values =
+            create_tau_list_values(r_pub_key, rev_reg, &proof.x_list, &proof.c_list)?;
+
+
+         */
+
+        let t1_hat = proof.x_list.y.clone() * proof.c_list.c_dash.clone() + proof.x_list.t.clone() * r_pub_key.p.clone();
+        let t2_hat = proof.x_list.v.clone() * proof.c_list.d_t.clone() + proof.x_list.d_dash.clone() * r_pub_key.p.clone();
+        let t_hat_expected_values = NonRevocProofTauListVA { t1: t1_hat, t2: t2_hat };
+
+        let t1_rhs = proof.c_list.c_bar.clone() - proof.c_list.d_t.clone();
+        let t2_rhs = rev_reg.accum.clone();
+
+        let t1_calc = t_hat_expected_values.t1 - ch_num_z.clone() * t1_rhs;
+        let t2_calc = t_hat_expected_values.t2 - ch_num_z.clone() * t2_rhs;
+
+        //println!("t1_calc, t2_calc {:?}, {:?}", t1_calc, t2_calc);
+
+        let non_revoc_proof_tau_list = Ok(NonRevocProofTauListVA {
+            t1: t1_calc,
+            t2: t2_calc
+        });
 
         non_revoc_proof_tau_list
     }
