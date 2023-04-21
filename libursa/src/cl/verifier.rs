@@ -7,7 +7,10 @@ use errors::prelude::*;
 
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
+use std::fmt::Error;
 use std::iter::FromIterator;
+use std::ops::Sub;
+use serde_json::Value;
 
 /// Party that wants to check that prover has some credentials provided by issuer.
 pub struct Verifier {}
@@ -208,6 +211,77 @@ impl ProofVerifier {
         });
 
         Ok(())
+    }
+
+    /// Add a subproof request for cks credential
+    /// wrapped in a generic credential.
+    pub fn add_sub_proof_request_generic(
+        &mut self,
+        sub_proof_request: &SubProofRequest,
+        credential_schema: &CredentialSchema,
+        non_credential_schema: &NonCredentialSchema,
+        credential_pub_key: &GenCredentialPublicKey,
+        rev_key_pub: Option<&GenRevocationKeyPublic>,
+        rev_reg: Option<&GenRevocationRegistry>,
+    ) -> UrsaCryptoResult<()> {
+        ProofVerifier::_check_add_sub_proof_request_params_consistency(
+            sub_proof_request,
+            credential_schema,
+        )?;
+
+        if let GenCredentialPublicKey::CKS(ref credential_public_key_cks) = credential_pub_key {
+            let mut rev_public_key_cks: Option<&RevocationKeyPublic> = None;
+            if rev_key_pub.is_some() {
+                if let GenRevocationKeyPublic::CKS(ref rev_key_pub_cks) = rev_key_pub.unwrap() {
+                    rev_public_key_cks = Some(rev_key_pub_cks);
+                }
+            }
+
+            let mut rev_registry_cks: Option<&RevocationRegistry> = None;
+            if rev_reg.is_some() {
+                if let GenRevocationRegistry::CKS(ref rev_reg_cks) = rev_reg.unwrap() {
+                    rev_registry_cks = Some(rev_reg_cks);
+                }
+            }
+
+            return ProofVerifier::add_sub_proof_request_cks(
+                self,
+                sub_proof_request,
+                credential_schema,
+                non_credential_schema,
+                credential_public_key_cks,
+                rev_public_key_cks,
+                rev_registry_cks
+            );
+        }
+
+        if let GenCredentialPublicKey::VA(ref credential_public_key_va) = credential_pub_key {
+            let mut rev_public_key_va: Option<&RevocationKeyPublicVA> = None;
+            if rev_key_pub.is_some() {
+                if let GenRevocationKeyPublic::VA(ref rev_key_pub_va) = rev_key_pub.unwrap() {
+                    rev_public_key_va = Some(rev_key_pub_va);
+                }
+            }
+
+            let mut rev_registry_va: Option<&RevocationRegistryVA> = None;
+            if rev_reg.is_some() {
+                if let GenRevocationRegistry::VA(ref rev_reg_va) = rev_reg.unwrap() {
+                    rev_registry_va = Some(rev_reg_va);
+                }
+            }
+
+            return ProofVerifier::add_sub_proof_request_va(
+                self,
+                sub_proof_request,
+                credential_schema,
+                non_credential_schema,
+                credential_public_key_va,
+                rev_public_key_va,
+                rev_registry_va
+            );
+        }
+
+        Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Unsupported Revocation Type"))
     }
 
 
@@ -538,6 +612,79 @@ impl ProofVerifier {
         Ok(valid)
     }
 
+    /// Add json proof request
+    pub fn add_sub_proof_request_json(&mut self, request_json: &SubproofRequestSchema) -> Result<(), Box<dyn std::error::Error>> {
+        let sub_proof_request_val:Value = serde_json::from_str(request_json.sub_proof_request.as_str()).unwrap();
+        let credential_schema_val: Value = serde_json::from_str(request_json.credential_schema.as_str()).unwrap();
+        let non_credential_schema_val: Value = serde_json::from_str(request_json.non_credential_schema.as_str()).unwrap();
+        let credential_public_key_val: Value = serde_json::from_str(request_json.credential_public_key.as_str()).unwrap();
+        let registry_public_key_val: Value = serde_json::from_str(request_json.registry_public_key.as_str()).unwrap();
+        let revocation_registry_val: Value = serde_json::from_str(request_json.revocation_registry.as_str()).unwrap();
+
+
+        // try to guess the type of credential public key and proceed thereafter
+        let credential_public_key: Result<GenCredentialPublicKey, serde_json::error::Error> = serde_json::from_value(credential_public_key_val.clone());
+        if credential_public_key.is_ok() {
+            // new type public key, proceed to deserialize other types
+            let sub_proof_request: SubProofRequest = serde_json::from_value(sub_proof_request_val)?;
+            let credential_schema: CredentialSchema = serde_json::from_value(credential_schema_val)?;
+            let non_credential_schema: NonCredentialSchema = serde_json::from_value(non_credential_schema_val)?;
+            let registry_public_key: Option<GenRevocationKeyPublic> = serde_json::from_value(registry_public_key_val)?;
+            let revocation_registry: Option<GenRevocationRegistry> = serde_json::from_value(revocation_registry_val)?;
+
+            ProofVerifier::add_sub_proof_request_generic(
+                self,
+                &sub_proof_request,
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key.unwrap(),
+                registry_public_key.as_ref(),
+                revocation_registry.as_ref()
+            ).unwrap();
+
+            return Ok(());
+
+        } else {
+            // old type, proceed to deserialize other types
+            let credential_public_key: CredentialPublicKey = serde_json::from_value(credential_public_key_val).unwrap();
+            let sub_proof_request: SubProofRequest = serde_json::from_value(sub_proof_request_val)?;
+            let credential_schema: CredentialSchema = serde_json::from_value(credential_schema_val)?;
+            let non_credential_schema: NonCredentialSchema = serde_json::from_value(non_credential_schema_val)?;
+            let registry_public_key: Option<RevocationKeyPublic> = serde_json::from_value(registry_public_key_val)?;
+            let revocation_registry: Option<RevocationRegistry> = serde_json::from_value(revocation_registry_val)?;
+            ProofVerifier::add_sub_proof_request(
+                self,
+                &sub_proof_request,
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                registry_public_key.as_ref(),
+                revocation_registry.as_ref()
+            ).unwrap();
+
+            return Ok(());
+
+        }
+
+    }
+
+    /// Verify from stringified objects
+    ///
+    pub fn verify_json(&mut self, proof_json: &ProofSchema) -> Result<bool, Box<dyn std::error::Error>>{
+
+        let proof: Result<GenProof, serde_json::error::Error> = serde_json::from_str(proof_json.proof.clone().as_str());
+        let nonce: Nonce = serde_json::from_str(proof_json.nonce.clone().as_str()).unwrap();
+        if proof.is_ok() {
+            return Ok(ProofVerifier::verify_generic(self, &proof.unwrap(), &nonce).unwrap());
+        } else {
+            let proof: Proof = serde_json::from_str(proof_json.proof.as_str()).unwrap();
+            return Ok(ProofVerifier::verify(self, &proof, &nonce).unwrap());
+        }
+
+        Ok(false)
+    }
+
+
 
     fn _check_add_sub_proof_request_params_consistency(
         sub_proof_request: &SubProofRequest,
@@ -693,7 +840,7 @@ impl ProofVerifier {
             &proof.m2,
             &unrevealed_attrs,
         )?;
-        println!("m2, t  {:?}, {:?}", proof.m2, t1);
+
         let mut ctx = BigNumber::new_context()?;
 
         let mut rar = proof
@@ -720,7 +867,6 @@ impl ProofVerifier {
             .mod_exp(c_hash, &p_pub_key.n, Some(&mut ctx))?;
 
         let t: BigNumber = t1.mod_mul(&t2, &p_pub_key.n, Some(&mut ctx))?;
-        println!("t term verifier: {:?}", t);
 
         trace!("ProofVerifier::_verify_equality: <<< t: {:?}", t);
 
@@ -874,7 +1020,6 @@ impl ProofVerifier {
     ) -> UrsaCryptoResult<NonRevocProofTauListVA> {
 
         let ch_num_z = FieldElement::from_bytes(&c_hash.to_bytes()?).unwrap();
-        println!("challenge v {:?}", ch_num_z.clone());
         /*
         let t_hat_expected_values =
             create_tau_list_expected_values(r_pub_key, rev_reg, rev_key_pub, &proof.c_list)?;
@@ -893,8 +1038,6 @@ impl ProofVerifier {
 
         let t1_calc = t_hat_expected_values.t1 - ch_num_z.clone() * t1_rhs;
         let t2_calc = t_hat_expected_values.t2 - ch_num_z.clone() * t2_rhs;
-
-        //println!("t1_calc, t2_calc {:?}, {:?}", t1_calc, t2_calc);
 
         let non_revoc_proof_tau_list = Ok(NonRevocProofTauListVA {
             t1: t1_calc,

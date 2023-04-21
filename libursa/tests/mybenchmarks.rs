@@ -31,7 +31,7 @@ mod my_benchmarks {
     use amcl_wrapper::extension_field_gt::GT;
     //use js_sys::Math::max;
     use num_traits::ToPrimitive;
-    use ursa::cl::issuer::mocks::credential_values;
+    //use ursa::cl::issuer::mocks::credential_values;
     use ursa::errors::{UrsaCryptoError, UrsaCryptoErrorKind, UrsaCryptoResult};
     //use ursa::ffi::cl::issuer::mocks::_credential_signature;
 
@@ -467,7 +467,7 @@ mod my_benchmarks {
                     credential_pub_key,
                     Some(rev_reg),
                 ).unwrap();
-            proofs.push(proof_builder.finalize_va(&nonces[i as usize]).unwrap());
+            proofs.push(proof_builder.finalize_generic(&nonces[i as usize]).unwrap());
             total_proving += start.elapsed();
         }
 

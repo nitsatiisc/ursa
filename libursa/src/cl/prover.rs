@@ -207,13 +207,12 @@ impl Prover {
             GenCredentialPublicKey::CKS(cred_pub_key_cks),
             GenRevocationKeyPublic::CKS(rev_key_pub_cks),
             GenRevocationRegistry::CKS(rev_reg_cks),
-            GenWitness::CKS(witness_cks)
+
         ) = (
                 credential_signature.try_clone()?,
                 credential_pub_key,
                 rev_key_pub.unwrap(),
                 rev_reg.unwrap(),
-                witness.unwrap()
         ) {
             Prover::process_credential_signature(
                 &mut cred_sig_cks,
@@ -224,7 +223,7 @@ impl Prover {
                 nonce,
                 Some(rev_key_pub_cks),
                 Some(rev_reg_cks),
-                Some(witness_cks)
+                Some(&witness.unwrap().unwrap_cks().unwrap())
             ).unwrap();
             *credential_signature = GenCredentialSignature::CKS(cred_sig_cks);
             return Ok(());
@@ -235,13 +234,11 @@ impl Prover {
             GenCredentialPublicKey::VA(cred_pub_key_va),
             GenRevocationKeyPublic::VA(rev_key_pub_va),
             GenRevocationRegistry::VA(rev_reg_va),
-            GenWitness::VA(witness_va)
         ) = (
             credential_signature.try_clone()?,
             credential_pub_key,
             rev_key_pub.unwrap(),
             rev_reg.unwrap(),
-            witness.unwrap()
         ) {
             Prover::process_credential_signature_va(
                 &mut cred_sig_va,
@@ -252,7 +249,7 @@ impl Prover {
                 nonce,
                 Some(rev_key_pub_va),
                 Some(rev_reg_va),
-                Some(witness_va)
+                None
             ).unwrap();
 
             *credential_signature = GenCredentialSignature::VA(cred_sig_va);
@@ -547,7 +544,7 @@ impl Prover {
         Ok(ProofBuilder {
             common_attributes: HashMap::new(),
             init_proofs: Vec::new(),
-            gen_init_proofs: Vec::new(),
+            gen_init_proofs: Vec::new(),        // new member to support generic revocation schemes
             c_list: Vec::new(),
             tau_list: Vec::new(),
         })
@@ -1277,6 +1274,92 @@ impl ProofBuilder {
         Ok(())
     }
 
+    /// Add subproof request for CKS based credential
+    pub fn add_sub_proof_request_cks(
+        &mut self,
+        sub_proof_request: &SubProofRequest,
+        credential_schema: &CredentialSchema,
+        non_credential_schema: &NonCredentialSchema,
+        credential_signature: &CredentialSignature,
+        credential_values: &CredentialValues,
+        credential_pub_key: &CredentialPublicKey,
+        rev_reg: Option<&RevocationRegistry>,
+        witness: Option<&Witness>,
+    ) -> UrsaCryptoResult<()> {
+        trace!(
+            "ProofBuilder::add_sub_proof_request: >>> sub_proof_request: {:?}, \
+             credential_schema: {:?}, \
+             non_credential_schema: {:?}, \
+             credential_signature: {:?}, \
+             credential_values: {:?}, \
+             credential_pub_key: {:?}, \
+             rev_reg: {:?}, \
+             witness: {:?}",
+            sub_proof_request,
+            credential_schema,
+            non_credential_schema,
+            credential_signature,
+            credential_values,
+            credential_pub_key,
+            rev_reg,
+            witness
+        );
+        ProofBuilder::_check_add_sub_proof_request_params_consistency(
+            credential_values,
+            sub_proof_request,
+            credential_schema,
+            non_credential_schema,
+        )?;
+
+        let mut non_revoc_init_proof = None;
+        let mut m2_tilde: Option<BigNumber> = None;
+
+        if let (&Some(ref r_cred), &Some(r_reg), &Some(ref r_pub_key), &Some(witness)) = (
+            &credential_signature.r_credential,
+            &rev_reg,
+            &credential_pub_key.r_key,
+            &witness,
+        ) {
+            let proof =
+                ProofBuilder::_init_non_revocation_proof(r_cred, r_reg, r_pub_key, witness)?;
+
+            self.c_list.extend_from_slice(&proof.as_c_list()?);
+            self.tau_list.extend_from_slice(&proof.as_tau_list()?);
+            m2_tilde = Some(group_element_to_bignum(&proof.tau_list_params.m2)?);
+            non_revoc_init_proof = Some(GenNonRevocInitProof::CKS(proof));
+        }
+
+        let primary_init_proof = ProofBuilder::_init_primary_proof(
+            &self.common_attributes,
+            &credential_pub_key.p_key,
+            &credential_signature.p_credential,
+            credential_values,
+            credential_schema,
+            non_credential_schema,
+            sub_proof_request,
+            m2_tilde,
+        )?;
+
+        self.c_list
+            .extend_from_slice(&primary_init_proof.as_c_list()?);
+        self.tau_list
+            .extend_from_slice(&primary_init_proof.as_tau_list()?);
+
+        let init_proof = GenInitProof {
+            primary_init_proof,
+            non_revoc_init_proof,
+            credential_values: credential_values.try_clone()?,
+            sub_proof_request: sub_proof_request.clone(),
+            credential_schema: credential_schema.clone(),
+            non_credential_schema: non_credential_schema.clone(),
+        };
+        self.gen_init_proofs.push(init_proof);
+
+        trace!("ProofBuilder::add_sub_proof_request: <<<");
+
+        Ok(())
+    }
+
     /// Add subproof request for VA based credential
     pub fn add_sub_proof_request_va(
         &mut self,
@@ -1344,6 +1427,84 @@ impl ProofBuilder {
 
         Ok(())
     }
+
+    /// Generic function to append the subproof request
+    pub fn add_sub_proof_request_generic(
+        &mut self,
+        sub_proof_request: &SubProofRequest,
+        credential_schema: &CredentialSchema,
+        non_credential_schema: &NonCredentialSchema,
+        credential_signature: &GenCredentialSignature,
+        credential_values: &CredentialValues,
+        credential_pub_key: &GenCredentialPublicKey,
+        rev_reg: Option<&GenRevocationRegistry>,
+        witness: Option<&GenWitness>,
+    ) -> UrsaCryptoResult<()> {
+
+     if let (
+        GenCredentialSignature::CKS(ref cred_signature_cks),
+        GenCredentialPublicKey::CKS(ref cred_pub_key_cks),
+     ) = (
+        credential_signature,
+        credential_pub_key
+     ) {
+        let mut rev_reg_cks: Option<&RevocationRegistry> = None;
+        let mut witness_cks: Option<&Witness> = None;
+
+        if rev_reg.is_some() {
+            if let GenRevocationRegistry::CKS(ref registry_cks) = rev_reg.unwrap() {
+                rev_reg_cks = Some(registry_cks);
+            }
+        }
+
+        if witness.is_some() {
+            if let GenWitness::CKS(ref witness_cks_ref) = witness.unwrap() {
+                witness_cks = Some(witness_cks_ref);
+            }
+        }
+
+        return ProofBuilder::add_sub_proof_request_cks(
+            self,
+            sub_proof_request,
+            credential_schema,
+            non_credential_schema,
+            cred_signature_cks,
+            credential_values,
+        cred_pub_key_cks,
+        rev_reg_cks,
+        witness_cks);
+
+     }
+
+        if let (
+            GenCredentialSignature::VA(ref cred_signature_va),
+            GenCredentialPublicKey::VA(ref cred_pub_key_va),
+        ) = (
+            credential_signature,
+            credential_pub_key
+        ) {
+            let mut rev_reg_va: Option<&RevocationRegistryVA> = None;
+            if rev_reg.is_some() {
+                if let GenRevocationRegistry::VA(ref registry_va) = rev_reg.unwrap() {
+                    rev_reg_va = Some(registry_va);
+                }
+            }
+
+            return ProofBuilder::add_sub_proof_request_va(
+                self,
+                sub_proof_request,
+                credential_schema,
+                non_credential_schema,
+                cred_signature_va,
+                credential_values,
+                cred_pub_key_va,
+                rev_reg_va);
+        }
+        return Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Unsupported Revocation Type"));
+    }
+
+
+
 
     /// ---------------------------------------------------------------------------------------
 
@@ -1477,17 +1638,14 @@ impl ProofBuilder {
         Ok(proof)
     }
 
-    pub fn finalize_va(&self, nonce: &Nonce) -> UrsaCryptoResult<GenProof> {
+    pub fn finalize_generic(&self, nonce: &Nonce) -> UrsaCryptoResult<GenProof> {
         trace!("ProofBuilder::finalize: >>> nonce: {:?}", nonce);
 
         let mut values: Vec<Vec<u8>> = Vec::new();
         values.extend_from_slice(&self.tau_list);
         values.extend_from_slice(&self.c_list);
 
-
         values.push(nonce.to_bytes()?);
-
-        println!("values finalize: {:?}", values);
 
         // In the anoncreds whitepaper, `challenge` is denoted by `c_h`
         let challenge = get_hash_as_int(&values)?;
@@ -1502,6 +1660,14 @@ impl ProofBuilder {
                         non_revoc_init_proof_va,
                         &challenge,
                     )?);
+                }
+
+                if let GenNonRevocInitProof::CKS(ref non_revok_init_proof_cks) = non_revoc_init_proof {
+                    non_revoc_proof = Some(
+                        GenNonRevocProof::CKS(ProofBuilder::_finalize_non_revocation_proof(
+                    non_revok_init_proof_cks,
+                        &challenge
+                        )?));
                 }
             }
 
@@ -1756,8 +1922,6 @@ impl ProofBuilder {
         let t2 = tau_list_params.d_dash.clone() * cred_rev_pub_key.p.clone() + tau_list_params.v.clone() * c_list.d_t.clone();
         let tau_list = NonRevocProofTauListVA {t1, t2};
 
-        println!("t1, t2 {:?}, {:?}", tau_list.t1.clone(), tau_list.t2.clone());
-
         let r_init_proof = NonRevocInitProofVA {
             c_list_params,
             tau_list_params,
@@ -1836,8 +2000,6 @@ impl ProofBuilder {
             &unrevealed_attrs,
         )?;
 
-        println!("m2_tilde, t  {:?}, {:?}", m2_tilde, t);
-
         let primary_equal_init_proof = PrimaryEqualInitProof {
             a_prime,
             t,
@@ -1850,7 +2012,6 @@ impl ProofBuilder {
             m2: c1.m_2.try_clone()?,
         };
 
-        println!("primary proof init m2: {:?}", c1.m_2);
         trace!(
             "ProofBuilder::_init_eq_proof: <<< primary_equal_init_proof: {:?}",
             primary_equal_init_proof
@@ -2097,7 +2258,6 @@ impl ProofBuilder {
             primary_equal_proof
         );
 
-        println!("Primary proof m2: {:?}", m2);
         Ok(primary_equal_proof)
     }
 
@@ -2389,7 +2549,6 @@ impl ProofBuilder {
         );
 
         let ch_num_z = FieldElement::from_bytes(&c_h.to_bytes()?).unwrap();
-        println!("challenge: {:?}", ch_num_z.clone());
         let mut x_list: Vec<FieldElement> = Vec::new();
 
 

@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 use std::iter::FromIterator;
-use std::ops::{Index, Mul};
+use std::ops::{Index, Mul, Sub};
 use k256::elliptic_curve::Field;
 //use amcl_wrapper::group_elem::GroupElement;
 use cl::amcl_wrapper::extension_field_gt::GT;
@@ -307,7 +307,25 @@ pub fn verify_non_mem_witness(
     (lhs.eq(&rhs))
 }
 
+/// JSON Schema for subproofrequest
+///
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize,Deserialize))]
+pub struct SubproofRequestSchema {
+    pub sub_proof_request: String,
+    pub credential_schema: String,
+    pub non_credential_schema: String,
+    pub credential_public_key: String,
+    pub registry_public_key: String,
+    pub revocation_registry: String
+}
 
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize,Deserialize))]
+pub struct ProofSchema {
+    pub proof: String,
+    pub nonce: String
+}
 
 /// Supported Revocation methods
 pub enum RevocationMethod {
@@ -404,6 +422,25 @@ pub enum GenRevocationRegistry {
     VA(RevocationRegistryVA)
 }
 
+impl GenRevocationRegistry {
+
+    pub fn unwrap_cks(&self) -> Option<&RevocationRegistry> {
+        let mut reg_cks: Option<&RevocationRegistry> = None;
+        if let GenRevocationRegistry::CKS(ref reg_internal) = self {
+            reg_cks = Some(reg_internal);
+        }
+        reg_cks
+    }
+
+    pub fn unwrap_va(&self) -> Option<&RevocationRegistryVA> {
+        let mut reg_va: Option<&RevocationRegistryVA> = None;
+        if let GenRevocationRegistry::VA(ref reg_internal) = self {
+            reg_va = Some(reg_internal);
+        }
+        reg_va
+    }
+}
+
 /// General Revocation Public Key
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
@@ -427,6 +464,28 @@ pub enum AuxiliaryParams {
     CKS(RevocationTailsGenerator),
     VA(FieldElementVector)
 }
+
+impl AuxiliaryParams {
+    pub fn unwrap_cks(&mut self) -> Option<SimpleTailsAccessor>
+    {
+        let mut simple_tails_accessor: Option<SimpleTailsAccessor> = None;
+        if let AuxiliaryParams::CKS(ref mut rev_tails_generator) = self {
+            simple_tails_accessor = Some(SimpleTailsAccessor::new(rev_tails_generator).unwrap());
+        }
+        simple_tails_accessor
+    }
+
+    pub fn unwrap_va(&mut self) -> Option<NoOpRevocationTailsAccessor> {
+        let mut noop_tails_accessor: Option<NoOpRevocationTailsAccessor> = None;
+        if let AuxiliaryParams::VA(ref mut edomain) = self {
+            noop_tails_accessor = Some(NoOpRevocationTailsAccessor::new());
+        }
+        noop_tails_accessor
+
+    }
+
+}
+
 
 /// Revocation Registry for VA. This is the reference of the
 /// registry to external parties like holders and verifiers
@@ -1450,7 +1509,7 @@ impl BlindedCredentialSecretsCorrectnessProof {
 /// “Sub Proof Request” - input to create a Proof for a credential;
 /// Contains attributes to be revealed and predicates.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Deserialize))]
+#[cfg_attr(feature = "serde", derive(Serialize,Deserialize))]
 pub struct SubProofRequest {
     revealed_attrs: BTreeSet<String>,
     predicates: BTreeSet<Predicate>,
