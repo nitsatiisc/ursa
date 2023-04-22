@@ -28,18 +28,8 @@ use std::hash::Hash;
 use std::iter::FromIterator;
 use std::ops::{Index, Mul, Sub};
 use k256::elliptic_curve::Field;
-//use amcl_wrapper::group_elem::GroupElement;
+
 use cl::amcl_wrapper::extension_field_gt::GT;
-//use amcl_wrapper::group_elem::GroupElementVector;
-
-// AMCL wrapper for faster field arithmetic
-
-//use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
-//use amcl_wrapper::group_elem::{GroupElement, GroupElementVector};
-//use amcl_wrapper::group_elem_g1::{G1, G1Vector, G1LookupTable};
-//use amcl_wrapper::group_elem_g2::{G2, G2Vector, G2LookupTable};
-//use amcl_wrapper::extension_field_gt::GT;
-
 use cl::amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
 use cl::amcl_wrapper::group_elem_g1::{G1, G1Vector};
 use cl::amcl_wrapper::group_elem_g2::G2;
@@ -307,568 +297,6 @@ pub fn verify_non_mem_witness(
     (lhs.eq(&rhs))
 }
 
-/// JSON Schema for subproofrequest
-///
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize,Deserialize))]
-pub struct SubproofRequestSchema {
-    pub sub_proof_request: String,
-    pub credential_schema: String,
-    pub non_credential_schema: String,
-    pub credential_public_key: String,
-    pub registry_public_key: String,
-    pub revocation_registry: String
-}
-
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize,Deserialize))]
-pub struct ProofSchema {
-    pub proof: String,
-    pub nonce: String
-}
-
-/// Supported Revocation methods
-pub enum RevocationMethod {
-    CKS,
-    VA
-}
-
-/// General Credential Public Key
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug)]
-pub enum GenCredentialPublicKey {
-    CKS(CredentialPublicKey),
-    VA(CredentialPublicKeyVA)
-}
-
-impl GenCredentialPublicKey {
-    pub fn try_clone(&self) -> UrsaCryptoResult<GenCredentialPublicKey> {
-        match self {
-            GenCredentialPublicKey::CKS(cks_cred) => { Ok(GenCredentialPublicKey::CKS(cks_cred.try_clone()?)) },
-            GenCredentialPublicKey::VA(va_cred) => { Ok(GenCredentialPublicKey::VA(va_cred.try_clone()?)) }
-        }
-    }
-}
-
-/// Credential Public Key for VA accumulator based credentials
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug)]
-pub struct CredentialPublicKeyVA {
-    p_key: CredentialPrimaryPublicKey,
-    r_key: Option<CredentialRevocationPublicKeyVA>,
-}
-
-impl CredentialPublicKeyVA {
-    pub fn try_clone(&self) -> UrsaCryptoResult<CredentialPublicKeyVA> {
-        Ok(CredentialPublicKeyVA {
-            p_key: self.p_key.try_clone()?,
-            r_key: self.r_key.clone(),
-        })
-    }
-
-    pub fn get_primary_key(&self) -> UrsaCryptoResult<CredentialPrimaryPublicKey> {
-        self.p_key.try_clone()
-    }
-
-    pub fn get_revocation_key(&self) -> UrsaCryptoResult<Option<CredentialRevocationPublicKeyVA>> {
-        Ok(self.r_key.clone())
-    }
-
-    pub fn build_from_parts(
-        p_key: &CredentialPrimaryPublicKey,
-        r_key: Option<&CredentialRevocationPublicKeyVA>,
-    ) -> UrsaCryptoResult<CredentialPublicKeyVA> {
-        Ok(CredentialPublicKeyVA {
-            p_key: p_key.try_clone()?,
-            r_key: r_key.cloned(),
-        })
-    }
-}
-
-
-/// Generalized Credential Private Key
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug)]
-pub enum GenCredentialPrivateKey {
-    CKS(CredentialPrivateKey),
-    VA(CredentialPrivateKeyVA)
-}
-
-/// Credential Private Key for VA accumulator scheme
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug)]
-pub struct CredentialPrivateKeyVA {
-    p_key: CredentialPrimaryPrivateKey
-}
-
-
-/// Credential Revocation Public Key for VA accumulator
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub struct CredentialRevocationPublicKeyVA {
-    p: G1,
-    p_tilde: G2,
-    x: G1,
-    y: G1,
-    z: G1,
-    k: G1
-}
-
-/// General Revocation Registry
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub enum GenRevocationRegistry {
-    CKS(RevocationRegistry),
-    VA(RevocationRegistryVA)
-}
-
-impl GenRevocationRegistry {
-
-    pub fn unwrap_cks(&self) -> Option<&RevocationRegistry> {
-        let mut reg_cks: Option<&RevocationRegistry> = None;
-        if let GenRevocationRegistry::CKS(ref reg_internal) = self {
-            reg_cks = Some(reg_internal);
-        }
-        reg_cks
-    }
-
-    pub fn unwrap_va(&self) -> Option<&RevocationRegistryVA> {
-        let mut reg_va: Option<&RevocationRegistryVA> = None;
-        if let GenRevocationRegistry::VA(ref reg_internal) = self {
-            reg_va = Some(reg_internal);
-        }
-        reg_va
-    }
-}
-
-/// General Revocation Public Key
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub enum GenRevocationKeyPublic {
-    CKS(RevocationKeyPublic),
-    VA(RevocationKeyPublicVA)
-}
-
-/// General RevocationPrivateKey
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug)]
-pub enum GenRevocationKeyPrivate {
-    CKS(RevocationKeyPrivate),
-    VA(RevocationKeyPrivateVA)
-}
-
-/// General RevocationAccessor
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub enum AuxiliaryParams {
-    CKS(RevocationTailsGenerator),
-    VA(FieldElementVector)
-}
-
-impl AuxiliaryParams {
-    pub fn unwrap_cks(&mut self) -> Option<SimpleTailsAccessor>
-    {
-        let mut simple_tails_accessor: Option<SimpleTailsAccessor> = None;
-        if let AuxiliaryParams::CKS(ref mut rev_tails_generator) = self {
-            simple_tails_accessor = Some(SimpleTailsAccessor::new(rev_tails_generator).unwrap());
-        }
-        simple_tails_accessor
-    }
-
-    pub fn unwrap_va(&mut self) -> Option<NoOpRevocationTailsAccessor> {
-        let mut noop_tails_accessor: Option<NoOpRevocationTailsAccessor> = None;
-        if let AuxiliaryParams::VA(ref mut edomain) = self {
-            noop_tails_accessor = Some(NoOpRevocationTailsAccessor::new());
-        }
-        noop_tails_accessor
-
-    }
-
-}
-
-
-/// Revocation Registry for VA. This is the reference of the
-/// registry to external parties like holders and verifiers
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub struct RevocationRegistryVA {
-    accum: G1
-}
-
-impl RevocationRegistryVA {
-    pub fn from_delta(rev_reg_delta: &RevocationRegistryDeltaVA) -> RevocationRegistryVA {
-        RevocationRegistryVA { accum: rev_reg_delta.accum.clone() }
-    }
-}
-
-/// Revocation Registry for VA. This is the reference of the
-/// registry for the issuer.
-#[derive(Debug, Clone)]
-pub struct VARegistry {
-    accum: G1,
-    revoked: HashSet<u32>
-}
-
-impl VARegistry {
-    pub fn new(
-        rev_reg: &RevocationRegistryVA
-    ) -> VARegistry {
-        let accum = rev_reg.accum.clone();
-        // update accum according to contents of private key
-        VARegistry {accum, revoked: HashSet::new()}
-    }
-
-    pub fn revoke(&mut self,
-                  rev_pub_key:&CredentialRevocationPublicKeyVA,
-                  reg_priv_key:&RevocationKeyPrivateVA,
-                  evaluation_domain: &FieldElementVector,
-                  revoked:&Vec<u32>
-    ) -> UrsaCryptoResult<RevocationRegistryDeltaVA> {
-        let old_accum = self.accum.clone();
-        if evaluation_domain.len() != (revoked.len() + 1) {
-            return Err(
-                    err_msg(
-                        UrsaCryptoErrorKind::InvalidStructure,
-                        "incompatible domain and update"
-                    ));
-        }
-
-        let n = revoked.len();
-
-        let mut dA = FieldElementVector::new(n+1);
-        let mut xA = FieldElementVector::new(n+1);
-        let mut vA = FieldElementVector::new(n+1);
-        let mut tA = FieldElementVector::new(n+1);
-        let mut y = FieldElementVector::new(n);
-        let mut vA_v = G1Vector::new(n+1);
-
-        // initialize the vectors
-        for i in 0..=n {
-            dA[i] = FieldElement::one();
-            xA[i] = FieldElement::one();
-            vA[i] = FieldElement::zero();
-            tA[i] = FieldElement::one();
-        }
-
-        for i in 0..n {
-            y[i] = FieldElement::from(revoked.get(i).unwrap().clone());
-        }
-
-        // compute the t vector for later use, where t[s] = \prod_{j=0}^{s-1} (y_j + \alpha)
-        let mut start = Instant::now();
-        for j in 0..n {
-            tA[j+1] = tA.index(j) * (reg_priv_key.alpha.clone() + y.index(j));
-        }
-        println!("Time to create tA vector {:?} ", start.elapsed());
-
-        let mut start = Instant::now();
-
-        // loop invariant : (0\leq j\leq n) ^ (vA[i]=\sum_{k=n-j}^{n-1} tA[k].\prod_{r=k+1}^{n-1}(y_r - i) ^
-        // (xA[i] = \prod_{k=n-j}^{n-1}(y_k - i).
-
-        for j in 0..n {
-            let s = n-1-j;
-            // update vA
-            for i in 0..=n {
-                vA[i] = vA.index(i) + (xA.index(i) * tA.index(s));
-            }
-            // update xA and dA
-
-            for i in 0..=n {
-                xA[i] = xA.index(i) * (y.index(s) - evaluation_domain.index(i));
-                dA[i] = dA.index(i) *( y.index(j) - evaluation_domain.index(i));
-            }
-        }
-        println!("Time to create vA vector {:?}", start.elapsed());
-
-        self.accum = tA.index(n) * self.accum.clone();
-        self.revoked.extend(revoked.clone());
-
-        let mut start = Instant::now();
-        for i in 0..=n {
-            vA_v[i] = vA.index(i) * old_accum.clone();
-
-        }
-        println!("Time to blind vA vector {:?}", start.elapsed());
-
-        let batch = BatchUpdateVA { dA: dA, vA: vA_v };
-        let accum = self.accum.clone();
-
-        Ok(RevocationRegistryDeltaVA::from_parts(&old_accum.clone(), &accum, &batch))
-    }
-}
-
-/// RevocationPublicKey for VA
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub struct RevocationKeyPublicVA {
-    q_tilde: G2
-}
-
-
-/// RevocationPrivateKey for VA
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub struct RevocationKeyPrivateVA {
-    alpha: FieldElement,  // accumulator private key
-    v0: Vec<FieldElement> // initialization elements
-}
-
-/// RevocationAccessor for VA
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub struct RevocationAccessorVA {
-    // to be decided. dummy for now
-    tails: u32
-}
-
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub struct BatchUpdateVA {
-    dA: FieldElementVector,     // evaluations of d_A polynomial
-    vA: G1Vector,     // evaluations of v_A polynomial masked using accumulator value V
-}
-
-
-#[cfg_attr(feature="serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub struct LagrangianDomain {
-    evaluation: FieldElementVector,
-    target: FieldElement,
-    coefficients: Vec<FieldElement>
-}
-
-impl LagrangianDomain {
-    pub fn from_parts(
-        evaluation: &FieldElementVector,
-        target: &FieldElement,
-    ) -> UrsaCryptoResult<LagrangianDomain> {
-        let mut coefficients: Vec<FieldElement> = Vec::new();
-        for i in 0..evaluation.len() {
-            let mut num = FieldElement::one();
-            let mut denom = FieldElement::one();
-            for j in 0..evaluation.len() {
-                if j != i {
-                    num = num * (target - evaluation.index(j));
-                    denom = denom * (evaluation.index(i) - evaluation.index(j));
-                }
-            }
-            // careful: inverse of zero is defined as zero
-            coefficients.push(num * denom.inverse());
-        }
-
-        Ok(LagrangianDomain {evaluation: evaluation.clone(), target: target.clone(), coefficients: coefficients.clone() })
-    }
-
-    pub fn coefficient(&self, index:usize) -> FieldElement {
-        self.coefficients.index(index).clone()
-    }
-
-    pub fn interpolate_field(&self, fvector: &FieldElementVector) -> FieldElement {
-        let cvector: FieldElementVector = FieldElementVector::from(self.coefficients.clone());
-        let fvector = fvector.clone();
-        let prod = fvector.inner_product(&cvector).unwrap();
-        prod
-    }
-
-    pub fn interpolate_group(&self, gvector: &G1Vector) -> G1 {
-        let cvector: FieldElementVector = FieldElementVector::from(self.coefficients.clone());
-        let prod = gvector.inner_product_var_time(cvector.iter()).unwrap();
-        prod
-    }
-
-}
-
-#[cfg_attr(feature="serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub struct WitnessVA {
-    accum: G1,
-    pub d: FieldElement,
-    pub C: G1
-}
-
-impl WitnessVA {
-    pub fn update(&mut self, delta: &RevocationRegistryDeltaVA, domain: &LagrangianDomain) -> UrsaCryptoResult<()> {
-
-        if self.accum != delta.prev_accum {
-            return Err(
-                    err_msg(
-                        UrsaCryptoErrorKind::InvalidStructure,
-                        "Delta does not match the witness"
-                    ));
-        }
-
-        // fill in the update code
-        let mut d_evals: Vec<FieldElement> = Vec::new();
-        let mut omega_evals: Vec<G1> = Vec::new();
-        let k = delta.revoked.len();
-        // We build vector omega_evals in the reverse direction
-        for i in 0..k {
-            let d = domain.interpolate_field(&delta.revoked.index(i).dA);
-            let omega = domain.interpolate_group(&delta.revoked.index(k-1-i).vA);
-            d_evals.push(d.to_owned());
-            omega_evals.push(omega.to_owned());
-        }
-
-        // finally push the initial value to omega evals.
-        omega_evals.push(self.C.to_owned());
-
-        // build the vector D consisting of partial products
-        let mut D: Vec<FieldElement> = Vec::new();
-        D.push(FieldElement::from(1u32));
-        let mut d = FieldElement::from(1u32);
-        for i in 0..k {
-            d = d * d_evals.index(k-1-i);
-            D.push(d.to_owned());
-        }
-
-
-        // update the witness
-        let omega = G1Vector::from(omega_evals);
-        let D = FieldElementVector::from(D);
-
-        self.C = omega.inner_product_var_time(D.iter()).unwrap();
-        self.d = self.d.clone() * D.index(k);
-        self.accum = delta.accum.clone();
-
-        Ok(())
-    }
-}
-
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub struct RevocationRegistryDeltaVA {
-    pub prev_accum: G1,
-    accum: G1,
-    revoked: Vec<BatchUpdateVA>
-}
-
-impl RevocationRegistryDeltaVA {
-    pub fn from_parts(
-        prev_accum: &G1,
-        accum: &G1,
-        batch: &BatchUpdateVA
-    ) -> RevocationRegistryDeltaVA {
-        RevocationRegistryDeltaVA {
-            prev_accum: prev_accum.clone(),
-            accum: accum.clone(),
-            revoked: vec![batch.to_owned()]
-        }
-    }
-
-    #[time_graph::instrument]
-    pub fn merge(&mut self, other_delta: &RevocationRegistryDeltaVA) -> UrsaCryptoResult<()> {
-        if self.accum != other_delta.prev_accum {
-            return Err(err_msg(
-                UrsaCryptoErrorKind::InvalidStructure,
-                "Deltas can not be merged.",
-            ));
-        }
-
-        self.accum = other_delta.accum.clone();
-        self.revoked.extend(other_delta.revoked.clone());
-
-        Ok(())
-    }
-}
-
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub enum GenRevocationRegistryDelta {
-    CKS(RevocationRegistryDelta),
-    VA(RevocationRegistryDeltaVA)
-}
-
-impl GenRevocationRegistryDelta {
-    pub fn unwrap_cks(&self) -> UrsaCryptoResult<RevocationRegistryDelta> {
-        if let GenRevocationRegistryDelta::CKS(rev_reg_cks) = self {
-            Ok(rev_reg_cks.clone())
-        } else {
-            Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Not a CKS registry"))
-        }
-    }
-
-    pub fn unwrap_va(&self) -> UrsaCryptoResult<RevocationRegistryDeltaVA> {
-        if let GenRevocationRegistryDelta::VA(rev_reg_va) = self {
-            Ok(rev_reg_va.clone())
-        } else {
-            Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Not a VA regisrty"))
-        }
-    }
-}
-
-/// Generalized Credential Signature
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum GenCredentialSignature {
-    CKS(CredentialSignature),
-    VA(CredentialSignatureVA)
-}
-
-impl GenCredentialSignature {
-    pub fn try_clone(&self) -> UrsaCryptoResult<GenCredentialSignature> {
-        match self {
-            GenCredentialSignature::CKS(cks_sig) => { Ok(GenCredentialSignature::CKS(cks_sig.try_clone()?)) },
-            GenCredentialSignature::VA(va_sig) => { Ok(GenCredentialSignature::VA(va_sig.try_clone()?)) }
-        }
-    }
-}
-
-/// Generic Witness
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub enum GenWitness {
-    CKS(Witness),
-    VA(WitnessVA)
-}
-
-impl GenWitness {
-    pub fn unwrap_cks(&self) -> UrsaCryptoResult<Witness> {
-        if let GenWitness::CKS(witness_cks) = self {
-            Ok(witness_cks.clone())
-        } else {
-            Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Not a CKS witness"))
-        }
-    }
-
-    pub fn unwrap_va(&self) -> UrsaCryptoResult<WitnessVA> {
-        if let GenWitness::VA(witness_va) = self {
-            Ok(witness_va.clone())
-        } else {
-            Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Not a VA witness"))
-        }
-    }
-}
-
-
-/// Credential Signature for VA accumulator
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug)]
-pub struct CredentialSignatureVA {
-    pub p_credential: PrimaryCredentialSignature,
-    pub r_credential: Option<NonRevocationCredentialSignatureVA>
-}
-
-impl CredentialSignatureVA {
-    pub fn try_clone(&self) -> UrsaCryptoResult<CredentialSignatureVA> {
-        Ok(CredentialSignatureVA {
-            p_credential: self.p_credential.try_clone()?,
-            r_credential: self.r_credential.clone(),
-        })
-    }
-}
-
-/// Non revocation credential signature for VA accumulator
-/// Here (d,c) constitutes the witness that must be updated
-/// to latest accumulator state before a proof presentation.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub struct NonRevocationCredentialSignatureVA {
-    pub witness: WitnessVA,
-    i: u32,
-    pub m2: FieldElement,
-}
-
-/// --------------------------------------------------------------------------------
 
 
 /// `Issuer Public Key` contains 2 internal parts.
@@ -1644,22 +1072,7 @@ impl SubProof {
     }
 }
 
-/// Proofs and Subproofs for generic revocation schemes
-///
-///
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug)]
-pub struct GenProof {
-    pub proofs: Vec<GenSubProof>,
-    pub aggregated_proof: AggregatedProof,
-}
 
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug)]
-pub struct GenSubProof {
-    pub primary_proof: PrimaryProof,
-    pub non_revoc_proof: Option<GenNonRevocProof>,
-}
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Eq, PartialEq)]
@@ -1744,12 +1157,6 @@ pub struct NonRevocProofVA {
     c_list: NonRevocProofCListVA
 }
 
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug)]
-pub enum GenNonRevocProof {
-    CKS(NonRevocProof),
-    VA(NonRevocProofVA)
-}
 
 #[derive(Debug)]
 pub struct InitProof {
@@ -1761,15 +1168,6 @@ pub struct InitProof {
     non_credential_schema: NonCredentialSchema,
 }
 
-#[derive(Debug)]
-pub struct GenInitProof {
-    primary_init_proof: PrimaryInitProof,
-    non_revoc_init_proof: Option<GenNonRevocInitProof>,
-    credential_values: CredentialValues,
-    sub_proof_request: SubProofRequest,
-    credential_schema: CredentialSchema,
-    non_credential_schema: NonCredentialSchema,
-}
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct PrimaryInitProof {
@@ -1816,114 +1214,6 @@ impl NonRevocInitProof {
 }
 
 
-/// Types to support VA accumulator
-/// ------------------------------------------------------------------------------
-#[derive(Debug)]
-pub struct NonRevocInitProofVA {
-    c_list_params: NonRevocProofXListVA,
-    tau_list_params: NonRevocProofXListVA,
-    c_list: NonRevocProofCListVA,
-    tau_list: NonRevocProofTauListVA,
-}
-
-impl NonRevocInitProofVA {
-    pub fn as_c_list(&self) -> UrsaCryptoResult<Vec<Vec<u8>>> {
-        let vec = self.c_list.as_list()?;
-        Ok(vec)
-    }
-
-    pub fn as_tau_list(&self) -> UrsaCryptoResult<Vec<Vec<u8>>> {
-        let vec = self.tau_list.as_slice()?;
-        Ok(vec)
-    }
-}
-
-#[derive(Debug)]
-pub enum GenNonRevocInitProof {
-    CKS(NonRevocInitProof),
-    VA(NonRevocInitProofVA)
-}
-
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub struct NonRevocProofXListVA {
-    u: FieldElement,
-    v: FieldElement,
-    t: FieldElement,
-    d: FieldElement,        // d comes from witness
-    d_dash: FieldElement,   // d'=d+vt
-    x: FieldElement,        // x = -d
-    beta: FieldElement,     // beta = x.inverse()
-    y: FieldElement        // y = m2 is the accumulated element
-}
-
-impl NonRevocProofXListVA {
-    pub fn as_list(&self) -> UrsaCryptoResult<Vec<FieldElement>> {
-        Ok(
-            vec![
-                self.u.clone(),
-                self.v.clone(),
-                self.t.clone(),
-                self.d.clone(),
-                self.d_dash.clone(),
-                self.x.clone(),
-                self.beta.clone(),
-                self.y.clone()
-            ]
-        )
-    }
-
-    pub fn from_list(seq: &[FieldElement]) -> NonRevocProofXListVA {
-        NonRevocProofXListVA {
-            u: seq[0].clone(),
-            v: seq[1].clone(),
-            t: seq[2].clone(),
-            d: seq[3].clone(),
-            d_dash: seq[4].clone(),
-            x: seq[5].clone(),
-            beta: seq[6].clone(),
-            y: seq[7].clone(),
-        }
-    }
-}
-
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub struct NonRevocProofCListVA {
-    //b: G1,                  // V.P^{-d}
-    c_dash: G1,             // C^u
-    d_t: G1,                // b^u.P^{-t}
-    c_bar: G1,              // (C')^{-y}.b^u
-}
-
-impl NonRevocProofCListVA {
-    pub fn as_list(&self) -> UrsaCryptoResult<Vec<Vec<u8>>> {
-        Ok(vec![
-            //self.b.to_bytes(false),
-            self.c_dash.to_bytes(false),
-            self.d_t.to_bytes(false),
-            self.c_bar.to_bytes(false)
-        ])
-    }
-}
-
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
-pub struct NonRevocProofTauListVA {
-    t1: G1,
-    t2: G1,
-}
-
-impl NonRevocProofTauListVA {
-    pub fn as_slice(&self) -> UrsaCryptoResult<Vec<Vec<u8>>> {
-        Ok(vec![
-            self.t1.to_bytes(false),
-            self.t2.to_bytes(false),
-        ])
-    }
-}
-
-/// ----------------------------------------------------------------
 
 
 #[derive(Debug, Eq, PartialEq)]
@@ -2097,22 +1387,22 @@ pub struct VerifiableCredential {
     rev_reg: Option<RevocationRegistry>,
 }
 
-/// Need a generalized type here:
+/// Proofs and Subproofs for generic revocation schemes
 ///
-/// ---------------------------------------------------------------------------------
+///
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug)]
-pub struct GenVerifiableCredential {
-    pub_key: GenCredentialPublicKey,
-    sub_proof_request: SubProofRequest,
-    credential_schema: CredentialSchema,
-    non_credential_schema: NonCredentialSchema,
-    rev_key_pub: Option<GenRevocationKeyPublic>,
-    rev_reg: Option<GenRevocationRegistry>,
+pub struct GenProof {
+    pub proofs: Vec<GenSubProof>,
+    pub aggregated_proof: AggregatedProof,
 }
 
-
-
-
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug)]
+pub struct GenSubProof {
+    pub primary_proof: PrimaryProof,
+    pub non_revoc_proof: Option<GenNonRevocProof>,
+}
 
 trait BytesView {
     fn to_bytes(&self) -> UrsaCryptoResult<Vec<u8>>;
@@ -2183,6 +1473,703 @@ fn clone_credential_value_map<K: Clone + Eq + Ord>(
     }
     Ok(res)
 }
+
+/// Additional types to support VA accumulator scheme and generic objects
+/// encapsulating different underlying revocation protocol
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize,Deserialize))]
+pub struct SubproofRequestSchema {
+    pub sub_proof_request: String,
+    pub credential_schema: String,
+    pub non_credential_schema: String,
+    pub credential_public_key: String,
+    pub registry_public_key: String,
+    pub revocation_registry: String
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize,Deserialize))]
+pub struct ProofSchema {
+    pub proof: String,
+    pub nonce: String
+}
+
+/// Supported Revocation methods
+pub enum RevocationMethod {
+    CKS,
+    VA
+}
+
+/// General Credential Public Key
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug)]
+pub enum GenCredentialPublicKey {
+    CKS(CredentialPublicKey),
+    VA(CredentialPublicKeyVA)
+}
+
+impl GenCredentialPublicKey {
+    pub fn try_clone(&self) -> UrsaCryptoResult<GenCredentialPublicKey> {
+        match self {
+            GenCredentialPublicKey::CKS(cks_cred) => { Ok(GenCredentialPublicKey::CKS(cks_cred.try_clone()?)) },
+            GenCredentialPublicKey::VA(va_cred) => { Ok(GenCredentialPublicKey::VA(va_cred.try_clone()?)) }
+        }
+    }
+}
+
+/// Credential Public Key for VA accumulator based credentials
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug)]
+pub struct CredentialPublicKeyVA {
+    p_key: CredentialPrimaryPublicKey,
+    r_key: Option<CredentialRevocationPublicKeyVA>,
+}
+
+impl CredentialPublicKeyVA {
+    pub fn try_clone(&self) -> UrsaCryptoResult<CredentialPublicKeyVA> {
+        Ok(CredentialPublicKeyVA {
+            p_key: self.p_key.try_clone()?,
+            r_key: self.r_key.clone(),
+        })
+    }
+
+    pub fn get_primary_key(&self) -> UrsaCryptoResult<CredentialPrimaryPublicKey> {
+        self.p_key.try_clone()
+    }
+
+    pub fn get_revocation_key(&self) -> UrsaCryptoResult<Option<CredentialRevocationPublicKeyVA>> {
+        Ok(self.r_key.clone())
+    }
+
+    pub fn build_from_parts(
+        p_key: &CredentialPrimaryPublicKey,
+        r_key: Option<&CredentialRevocationPublicKeyVA>,
+    ) -> UrsaCryptoResult<CredentialPublicKeyVA> {
+        Ok(CredentialPublicKeyVA {
+            p_key: p_key.try_clone()?,
+            r_key: r_key.cloned(),
+        })
+    }
+}
+
+
+/// Generalized Credential Private Key
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug)]
+pub enum GenCredentialPrivateKey {
+    CKS(CredentialPrivateKey),
+    VA(CredentialPrivateKeyVA)
+}
+
+/// Credential Private Key for VA accumulator scheme
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug)]
+pub struct CredentialPrivateKeyVA {
+    p_key: CredentialPrimaryPrivateKey
+}
+
+
+/// Credential Revocation Public Key for VA accumulator
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub struct CredentialRevocationPublicKeyVA {
+    p: G1,
+    p_tilde: G2,
+    x: G1,
+    y: G1,
+    z: G1,
+    k: G1
+}
+
+/// General Revocation Registry
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub enum GenRevocationRegistry {
+    CKS(RevocationRegistry),
+    VA(RevocationRegistryVA)
+}
+
+impl GenRevocationRegistry {
+
+    pub fn unwrap_cks(&self) -> Option<&RevocationRegistry> {
+        let mut reg_cks: Option<&RevocationRegistry> = None;
+        if let GenRevocationRegistry::CKS(ref reg_internal) = self {
+            reg_cks = Some(reg_internal);
+        }
+        reg_cks
+    }
+
+    pub fn unwrap_va(&self) -> Option<&RevocationRegistryVA> {
+        let mut reg_va: Option<&RevocationRegistryVA> = None;
+        if let GenRevocationRegistry::VA(ref reg_internal) = self {
+            reg_va = Some(reg_internal);
+        }
+        reg_va
+    }
+}
+
+/// General Revocation Public Key
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub enum GenRevocationKeyPublic {
+    CKS(RevocationKeyPublic),
+    VA(RevocationKeyPublicVA)
+}
+
+/// General RevocationPrivateKey
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug)]
+pub enum GenRevocationKeyPrivate {
+    CKS(RevocationKeyPrivate),
+    VA(RevocationKeyPrivateVA)
+}
+
+/// General RevocationAccessor
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub enum AuxiliaryParams {
+    CKS(RevocationTailsGenerator),
+    VA(FieldElementVector)
+}
+
+impl AuxiliaryParams {
+    pub fn unwrap_cks(&mut self) -> Option<SimpleTailsAccessor>
+    {
+        let mut simple_tails_accessor: Option<SimpleTailsAccessor> = None;
+        if let AuxiliaryParams::CKS(ref mut rev_tails_generator) = self {
+            simple_tails_accessor = Some(SimpleTailsAccessor::new(rev_tails_generator).unwrap());
+        }
+        simple_tails_accessor
+    }
+
+    pub fn unwrap_va(&mut self) -> Option<NoOpRevocationTailsAccessor> {
+        let mut noop_tails_accessor: Option<NoOpRevocationTailsAccessor> = None;
+        if let AuxiliaryParams::VA(ref mut edomain) = self {
+            noop_tails_accessor = Some(NoOpRevocationTailsAccessor::new());
+        }
+        noop_tails_accessor
+
+    }
+
+}
+
+
+/// Revocation Registry for VA. This is the reference of the
+/// registry to external parties like holders and verifiers
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub struct RevocationRegistryVA {
+    accum: G1
+}
+
+impl RevocationRegistryVA {
+    pub fn from_delta(rev_reg_delta: &RevocationRegistryDeltaVA) -> RevocationRegistryVA {
+        RevocationRegistryVA { accum: rev_reg_delta.accum.clone() }
+    }
+}
+
+/// Revocation Registry for VA. This is the reference of the
+/// registry for the issuer.
+#[derive(Debug, Clone)]
+pub struct VARegistry {
+    accum: G1,
+    revoked: HashSet<u32>
+}
+
+impl VARegistry {
+    pub fn new(
+        rev_reg: &RevocationRegistryVA
+    ) -> VARegistry {
+        let accum = rev_reg.accum.clone();
+        // update accum according to contents of private key
+        VARegistry {accum, revoked: HashSet::new()}
+    }
+
+    pub fn revoke(&mut self,
+                  rev_pub_key:&CredentialRevocationPublicKeyVA,
+                  reg_priv_key:&RevocationKeyPrivateVA,
+                  evaluation_domain: &FieldElementVector,
+                  revoked:&Vec<u32>
+    ) -> UrsaCryptoResult<RevocationRegistryDeltaVA> {
+        let old_accum = self.accum.clone();
+        if evaluation_domain.len() != (revoked.len() + 1) {
+            return Err(
+                err_msg(
+                    UrsaCryptoErrorKind::InvalidStructure,
+                    "incompatible domain and update"
+                ));
+        }
+
+        let n = revoked.len();
+
+        let mut dA = FieldElementVector::new(n+1);
+        let mut xA = FieldElementVector::new(n+1);
+        let mut vA = FieldElementVector::new(n+1);
+        let mut tA = FieldElementVector::new(n+1);
+        let mut y = FieldElementVector::new(n);
+        let mut vA_v = G1Vector::new(n+1);
+
+        // initialize the vectors
+        for i in 0..=n {
+            dA[i] = FieldElement::one();
+            xA[i] = FieldElement::one();
+            vA[i] = FieldElement::zero();
+            tA[i] = FieldElement::one();
+        }
+
+        for i in 0..n {
+            y[i] = FieldElement::from(revoked.get(i).unwrap().clone());
+        }
+
+        // compute the t vector for later use, where t[s] = \prod_{j=0}^{s-1} (y_j + \alpha)
+        let mut start = Instant::now();
+        for j in 0..n {
+            tA[j+1] = tA.index(j) * (reg_priv_key.alpha.clone() + y.index(j));
+        }
+        println!("Time to create tA vector {:?} ", start.elapsed());
+
+        let mut start = Instant::now();
+
+        // loop invariant : (0\leq j\leq n) ^ (vA[i]=\sum_{k=n-j}^{n-1} tA[k].\prod_{r=k+1}^{n-1}(y_r - i) ^
+        // (xA[i] = \prod_{k=n-j}^{n-1}(y_k - i).
+
+        for j in 0..n {
+            let s = n-1-j;
+            // update vA
+            for i in 0..=n {
+                vA[i] = vA.index(i) + (xA.index(i) * tA.index(s));
+            }
+            // update xA and dA
+
+            for i in 0..=n {
+                xA[i] = xA.index(i) * (y.index(s) - evaluation_domain.index(i));
+                dA[i] = dA.index(i) *( y.index(j) - evaluation_domain.index(i));
+            }
+        }
+        println!("Time to create vA vector {:?}", start.elapsed());
+
+        self.accum = tA.index(n) * self.accum.clone();
+        self.revoked.extend(revoked.clone());
+
+        let mut start = Instant::now();
+        for i in 0..=n {
+            vA_v[i] = vA.index(i) * old_accum.clone();
+
+        }
+        println!("Time to blind vA vector {:?}", start.elapsed());
+
+        let batch = BatchUpdateVA { dA: dA, vA: vA_v };
+        let accum = self.accum.clone();
+
+        Ok(RevocationRegistryDeltaVA::from_parts(&old_accum.clone(), &accum, &batch))
+    }
+}
+
+/// RevocationPublicKey for VA
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub struct RevocationKeyPublicVA {
+    q_tilde: G2
+}
+
+
+/// RevocationPrivateKey for VA
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub struct RevocationKeyPrivateVA {
+    alpha: FieldElement,  // accumulator private key
+    v0: Vec<FieldElement> // initialization elements
+}
+
+/// RevocationAccessor for VA
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub struct RevocationAccessorVA {
+    // to be decided. dummy for now
+    tails: u32
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub struct BatchUpdateVA {
+    dA: FieldElementVector,     // evaluations of d_A polynomial
+    vA: G1Vector,     // evaluations of v_A polynomial masked using accumulator value V
+}
+
+
+#[cfg_attr(feature="serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub struct LagrangianDomain {
+    evaluation: FieldElementVector,
+    target: FieldElement,
+    coefficients: Vec<FieldElement>
+}
+
+impl LagrangianDomain {
+    pub fn from_parts(
+        evaluation: &FieldElementVector,
+        target: &FieldElement,
+    ) -> UrsaCryptoResult<LagrangianDomain> {
+        let mut coefficients: Vec<FieldElement> = Vec::new();
+        for i in 0..evaluation.len() {
+            let mut num = FieldElement::one();
+            let mut denom = FieldElement::one();
+            for j in 0..evaluation.len() {
+                if j != i {
+                    num = num * (target - evaluation.index(j));
+                    denom = denom * (evaluation.index(i) - evaluation.index(j));
+                }
+            }
+            // careful: inverse of zero is defined as zero
+            coefficients.push(num * denom.inverse());
+        }
+
+        Ok(LagrangianDomain {evaluation: evaluation.clone(), target: target.clone(), coefficients: coefficients.clone() })
+    }
+
+    pub fn coefficient(&self, index:usize) -> FieldElement {
+        self.coefficients.index(index).clone()
+    }
+
+    pub fn interpolate_field(&self, fvector: &FieldElementVector) -> FieldElement {
+        let cvector: FieldElementVector = FieldElementVector::from(self.coefficients.clone());
+        let fvector = fvector.clone();
+        let prod = fvector.inner_product(&cvector).unwrap();
+        prod
+    }
+
+    pub fn interpolate_group(&self, gvector: &G1Vector) -> G1 {
+        let cvector: FieldElementVector = FieldElementVector::from(self.coefficients.clone());
+        let prod = gvector.inner_product_var_time(cvector.iter()).unwrap();
+        prod
+    }
+
+}
+
+#[cfg_attr(feature="serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub struct WitnessVA {
+    accum: G1,
+    pub d: FieldElement,
+    pub C: G1
+}
+
+impl WitnessVA {
+    pub fn update(&mut self, delta: &RevocationRegistryDeltaVA, domain: &LagrangianDomain) -> UrsaCryptoResult<()> {
+
+        if self.accum != delta.prev_accum {
+            return Err(
+                err_msg(
+                    UrsaCryptoErrorKind::InvalidStructure,
+                    "Delta does not match the witness"
+                ));
+        }
+
+        // fill in the update code
+        let mut d_evals: Vec<FieldElement> = Vec::new();
+        let mut omega_evals: Vec<G1> = Vec::new();
+        let k = delta.revoked.len();
+        // We build vector omega_evals in the reverse direction
+        for i in 0..k {
+            let d = domain.interpolate_field(&delta.revoked.index(i).dA);
+            let omega = domain.interpolate_group(&delta.revoked.index(k-1-i).vA);
+            d_evals.push(d.to_owned());
+            omega_evals.push(omega.to_owned());
+        }
+
+        // finally push the initial value to omega evals.
+        omega_evals.push(self.C.to_owned());
+
+        // build the vector D consisting of partial products
+        let mut D: Vec<FieldElement> = Vec::new();
+        D.push(FieldElement::from(1u32));
+        let mut d = FieldElement::from(1u32);
+        for i in 0..k {
+            d = d * d_evals.index(k-1-i);
+            D.push(d.to_owned());
+        }
+
+
+        // update the witness
+        let omega = G1Vector::from(omega_evals);
+        let D = FieldElementVector::from(D);
+
+        self.C = omega.inner_product_var_time(D.iter()).unwrap();
+        self.d = self.d.clone() * D.index(k);
+        self.accum = delta.accum.clone();
+
+        Ok(())
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub struct RevocationRegistryDeltaVA {
+    pub prev_accum: G1,
+    accum: G1,
+    revoked: Vec<BatchUpdateVA>
+}
+
+impl RevocationRegistryDeltaVA {
+    pub fn from_parts(
+        prev_accum: &G1,
+        accum: &G1,
+        batch: &BatchUpdateVA
+    ) -> RevocationRegistryDeltaVA {
+        RevocationRegistryDeltaVA {
+            prev_accum: prev_accum.clone(),
+            accum: accum.clone(),
+            revoked: vec![batch.to_owned()]
+        }
+    }
+
+    #[time_graph::instrument]
+    pub fn merge(&mut self, other_delta: &RevocationRegistryDeltaVA) -> UrsaCryptoResult<()> {
+        if self.accum != other_delta.prev_accum {
+            return Err(err_msg(
+                UrsaCryptoErrorKind::InvalidStructure,
+                "Deltas can not be merged.",
+            ));
+        }
+
+        self.accum = other_delta.accum.clone();
+        self.revoked.extend(other_delta.revoked.clone());
+
+        Ok(())
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub enum GenRevocationRegistryDelta {
+    CKS(RevocationRegistryDelta),
+    VA(RevocationRegistryDeltaVA)
+}
+
+impl GenRevocationRegistryDelta {
+    pub fn unwrap_cks(&self) -> UrsaCryptoResult<RevocationRegistryDelta> {
+        if let GenRevocationRegistryDelta::CKS(rev_reg_cks) = self {
+            Ok(rev_reg_cks.clone())
+        } else {
+            Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Not a CKS registry"))
+        }
+    }
+
+    pub fn unwrap_va(&self) -> UrsaCryptoResult<RevocationRegistryDeltaVA> {
+        if let GenRevocationRegistryDelta::VA(rev_reg_va) = self {
+            Ok(rev_reg_va.clone())
+        } else {
+            Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Not a VA regisrty"))
+        }
+    }
+}
+
+/// Generalized Credential Signature
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum GenCredentialSignature {
+    CKS(CredentialSignature),
+    VA(CredentialSignatureVA)
+}
+
+impl GenCredentialSignature {
+    pub fn try_clone(&self) -> UrsaCryptoResult<GenCredentialSignature> {
+        match self {
+            GenCredentialSignature::CKS(cks_sig) => { Ok(GenCredentialSignature::CKS(cks_sig.try_clone()?)) },
+            GenCredentialSignature::VA(va_sig) => { Ok(GenCredentialSignature::VA(va_sig.try_clone()?)) }
+        }
+    }
+}
+
+/// Generic Witness
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub enum GenWitness {
+    CKS(Witness),
+    VA(WitnessVA)
+}
+
+impl GenWitness {
+    pub fn unwrap_cks(&self) -> UrsaCryptoResult<Witness> {
+        if let GenWitness::CKS(witness_cks) = self {
+            Ok(witness_cks.clone())
+        } else {
+            Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Not a CKS witness"))
+        }
+    }
+
+    pub fn unwrap_va(&self) -> UrsaCryptoResult<WitnessVA> {
+        if let GenWitness::VA(witness_va) = self {
+            Ok(witness_va.clone())
+        } else {
+            Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Not a VA witness"))
+        }
+    }
+}
+
+
+/// Credential Signature for VA accumulator
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug)]
+pub struct CredentialSignatureVA {
+    pub p_credential: PrimaryCredentialSignature,
+    pub r_credential: Option<NonRevocationCredentialSignatureVA>
+}
+
+impl CredentialSignatureVA {
+    pub fn try_clone(&self) -> UrsaCryptoResult<CredentialSignatureVA> {
+        Ok(CredentialSignatureVA {
+            p_credential: self.p_credential.try_clone()?,
+            r_credential: self.r_credential.clone(),
+        })
+    }
+}
+
+/// Non revocation credential signature for VA accumulator
+/// Here (d,c) constitutes the witness that must be updated
+/// to latest accumulator state before a proof presentation.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub struct NonRevocationCredentialSignatureVA {
+    pub witness: WitnessVA,
+    i: u32,
+    pub m2: FieldElement,
+}
+
+/// Generalized Verifiable Credential
+#[derive(Debug)]
+pub struct GenVerifiableCredential {
+    pub_key: GenCredentialPublicKey,
+    sub_proof_request: SubProofRequest,
+    credential_schema: CredentialSchema,
+    non_credential_schema: NonCredentialSchema,
+    rev_key_pub: Option<GenRevocationKeyPublic>,
+    rev_reg: Option<GenRevocationRegistry>,
+}
+
+#[derive(Debug)]
+pub struct NonRevocInitProofVA {
+    c_list_params: NonRevocProofXListVA,
+    tau_list_params: NonRevocProofXListVA,
+    c_list: NonRevocProofCListVA,
+    tau_list: NonRevocProofTauListVA,
+}
+
+impl NonRevocInitProofVA {
+    pub fn as_c_list(&self) -> UrsaCryptoResult<Vec<Vec<u8>>> {
+        let vec = self.c_list.as_list()?;
+        Ok(vec)
+    }
+
+    pub fn as_tau_list(&self) -> UrsaCryptoResult<Vec<Vec<u8>>> {
+        let vec = self.tau_list.as_slice()?;
+        Ok(vec)
+    }
+}
+
+#[derive(Debug)]
+pub enum GenNonRevocInitProof {
+    CKS(NonRevocInitProof),
+    VA(NonRevocInitProofVA)
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub struct NonRevocProofXListVA {
+    u: FieldElement,
+    v: FieldElement,
+    t: FieldElement,
+    d: FieldElement,        // d comes from witness
+    d_dash: FieldElement,   // d'=d+vt
+    x: FieldElement,        // x = -d
+    beta: FieldElement,     // beta = x.inverse()
+    y: FieldElement        // y = m2 is the accumulated element
+}
+
+impl NonRevocProofXListVA {
+    pub fn as_list(&self) -> UrsaCryptoResult<Vec<FieldElement>> {
+        Ok(
+            vec![
+                self.u.clone(),
+                self.v.clone(),
+                self.t.clone(),
+                self.d.clone(),
+                self.d_dash.clone(),
+                self.x.clone(),
+                self.beta.clone(),
+                self.y.clone()
+            ]
+        )
+    }
+
+    pub fn from_list(seq: &[FieldElement]) -> NonRevocProofXListVA {
+        NonRevocProofXListVA {
+            u: seq[0].clone(),
+            v: seq[1].clone(),
+            t: seq[2].clone(),
+            d: seq[3].clone(),
+            d_dash: seq[4].clone(),
+            x: seq[5].clone(),
+            beta: seq[6].clone(),
+            y: seq[7].clone(),
+        }
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub struct NonRevocProofCListVA {
+    //b: G1,                  // V.P^{-d}
+    c_dash: G1,             // C^u
+    d_t: G1,                // b^u.P^{-t}
+    c_bar: G1,              // (C')^{-y}.b^u
+}
+
+impl NonRevocProofCListVA {
+    pub fn as_list(&self) -> UrsaCryptoResult<Vec<Vec<u8>>> {
+        Ok(vec![
+            //self.b.to_bytes(false),
+            self.c_dash.to_bytes(false),
+            self.d_t.to_bytes(false),
+            self.c_bar.to_bytes(false)
+        ])
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
+pub struct NonRevocProofTauListVA {
+    t1: G1,
+    t2: G1,
+}
+
+impl NonRevocProofTauListVA {
+    pub fn as_slice(&self) -> UrsaCryptoResult<Vec<Vec<u8>>> {
+        Ok(vec![
+            self.t1.to_bytes(false),
+            self.t2.to_bytes(false),
+        ])
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug)]
+pub enum GenNonRevocProof {
+    CKS(NonRevocProof),
+    VA(NonRevocProofVA)
+}
+
+#[derive(Debug)]
+pub struct GenInitProof {
+    primary_init_proof: PrimaryInitProof,
+    non_revoc_init_proof: Option<GenNonRevocInitProof>,
+    credential_values: CredentialValues,
+    sub_proof_request: SubProofRequest,
+    credential_schema: CredentialSchema,
+    non_credential_schema: NonCredentialSchema,
+}
+
+/// ----------------------------------------------------------------
 
 #[cfg(test)]
 mod test {
