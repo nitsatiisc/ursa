@@ -274,28 +274,6 @@ impl CredentialValuesBuilder {
     }
 }
 
-/// --------------------------------------------------------------------------------
-/// Changes to support more revocations schemes.
-
-pub fn verify_non_mem_witness(
-    cred_rev_pub_key: &CredentialRevocationPublicKeyVA,
-    reg_pub_key: &RevocationKeyPublicVA,
-    rev_reg: &RevocationRegistryVA,
-    witness: &WitnessVA,
-    rev_idx: u32,
-) -> bool {
-    let mut C = witness.C.clone();
-    let mut d = witness.d.clone();
-    let p = cred_rev_pub_key.p.clone();
-    let y = FieldElement::from(rev_idx);
-    let p_tilde = cred_rev_pub_key.p_tilde.clone();
-    let q_tilde = reg_pub_key.q_tilde.clone();
-    let V = rev_reg.accum.clone();
-
-    let lhs = GT::ate_pairing(&C, &((y * p_tilde.clone()) + q_tilde.clone())) * GT::ate_pairing(&p, &p_tilde).pow(&d);
-    let rhs = GT::ate_pairing(&V,&p_tilde);
-    (lhs.eq(&rhs))
-}
 
 
 
@@ -479,7 +457,7 @@ pub type Accumulator = PointG2;
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct RevocationRegistry {
-    accum: Accumulator,
+    pub accum: Accumulator,
 }
 
 impl From<RevocationRegistryDelta> for RevocationRegistry {

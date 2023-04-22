@@ -60,9 +60,6 @@ path = "bin/test_xchacha20poly1305.rs"
 required-features = ["benchmarkxchacha20poly1305"]
 
 
-
-
-
 [features]
 default = ["encryption", "ffi", "hashes", "kex", "serde", "signatures_native", "sharing_native"]
 aescbc = ["aead", "aes", "block-modes", "block-padding", "hex", "hmac", "rand", "sha2/std", "subtle", "zeroize"]
@@ -141,6 +138,7 @@ num-traits = { version = "0.2.15" }
 openssl = { version = "0.10", optional = true }
 # TODO: Find out if the wasm-bindgen feature can be made dependent on our own wasm feature
 rand = { version = "0.7", features = ["wasm-bindgen"], optional = true }
+getrandom = { version = "0.2", features = ["js"], optional = true }
 rand_chacha = { version = "=0.2.1", optional = true }
 rustchacha20poly1305 = { version = "0.7", package = "chacha20poly1305", optional = true }
 k256 = { version = "0.9.6", optional = true, features = ["ecdh", "ecdsa", "sha256"]}
