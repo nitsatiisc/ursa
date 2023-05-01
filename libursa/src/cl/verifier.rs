@@ -651,44 +651,7 @@ impl ProofVerifier {
         non_revoc_proof_tau_list
     }
 
-    /// Non revocation proof verification for the VA revocation scheme
-    ///
-    ///
-    fn _verify_non_revocation_proof_va(
-        r_pub_key: &CredentialRevocationPublicKeyVA,
-        rev_reg: &RevocationRegistryVA,
-        rev_key_pub: &RevocationKeyPublicVA,
-        c_hash: &BigNumber,
-        proof: &NonRevocProofVA,
-    ) -> UrsaCryptoResult<NonRevocProofTauListVA> {
 
-        let ch_num_z = FieldElement::from_bytes(&c_hash.to_bytes()?).unwrap();
-        /*
-        let t_hat_expected_values =
-            create_tau_list_expected_values(r_pub_key, rev_reg, rev_key_pub, &proof.c_list)?;
-        let t_hat_calc_values =
-            create_tau_list_values(r_pub_key, rev_reg, &proof.x_list, &proof.c_list)?;
-
-
-         */
-
-        let t1_hat = proof.x_list.y.clone() * proof.c_list.c_dash.clone() + proof.x_list.t.clone() * r_pub_key.p.clone();
-        let t2_hat = proof.x_list.v.clone() * proof.c_list.d_t.clone() + proof.x_list.d_dash.clone() * r_pub_key.p.clone();
-        let t_hat_expected_values = NonRevocProofTauListVA { t1: t1_hat, t2: t2_hat };
-
-        let t1_rhs = proof.c_list.c_bar.clone() - proof.c_list.d_t.clone();
-        let t2_rhs = rev_reg.accum.clone();
-
-        let t1_calc = t_hat_expected_values.t1 - ch_num_z.clone() * t1_rhs;
-        let t2_calc = t_hat_expected_values.t2 - ch_num_z.clone() * t2_rhs;
-
-        let non_revoc_proof_tau_list = Ok(NonRevocProofTauListVA {
-            t1: t1_calc,
-            t2: t2_calc
-        });
-
-        non_revoc_proof_tau_list
-    }
 }
 
 #[cfg(test)]

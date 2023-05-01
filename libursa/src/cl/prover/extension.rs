@@ -564,20 +564,34 @@ impl ProofBuilder {
             d_dash: FieldElement::random(),     // adjust later to d+vt
             x: FieldElement::zero(),            // adjust later to -d
             beta: FieldElement::zero(),         // adjust later to x^-1
-            y: r_cred.m2.clone()
+            y: r_cred.m2.clone(),
+            r_u: FieldElement::random(),
+            r_v: FieldElement::random(),
+            r_t: FieldElement::random(),
+            r_dash: FieldElement::random(),
+            r_x: FieldElement::random(),
+            r_beta: FieldElement::random()
         };
 
         c_list_params.x = c_list_params.d.clone().negation();
         c_list_params.v = c_list_params.u.clone().inverse();
         c_list_params.d_dash = c_list_params.d.clone() + (c_list_params.v.clone() * c_list_params.t.clone());
         c_list_params.beta = c_list_params.x.clone().inverse();
+        c_list_params.r_t = c_list_params.r_x.clone() + c_list_params.r_dash.clone() -
+            (c_list_params.t.clone() * c_list_params.r_v.clone());
+        c_list_params.r_u = (c_list_params.u.clone() * c_list_params.r_v.clone()).negation();
+        c_list_params.r_beta = (c_list_params.beta.clone() * c_list_params.r_x.clone()).negation();
 
         // compute C values
         let b = rev_reg.accum.clone() + (c_list_params.x.clone() * cred_rev_pub_key.p.clone());
         let c_dash = c_list_params.u.clone() * r_cred.witness.C.clone();
         let d_t = (c_list_params.u.clone() * b.clone()) - (c_list_params.t.clone() *cred_rev_pub_key.p.clone());
         let c_bar = (c_list_params.u.clone() * b.clone()) - (c_list_params.y.clone() * c_dash.clone());
-        let mut c_list = NonRevocProofCListVA { c_dash, d_t, c_bar };
+        let c_v = (c_list_params.v.clone() * cred_rev_pub_key.x.clone()) + (c_list_params.r_v.clone()*cred_rev_pub_key.y.clone());
+        let c_x = (c_list_params.x.clone() * cred_rev_pub_key.x.clone()) + (c_list_params.r_x.clone() * cred_rev_pub_key.y.clone());
+        let c_d_dash = (c_list_params.d_dash.clone() * cred_rev_pub_key.x.clone()) + (c_list_params.r_dash.clone() * cred_rev_pub_key.y.clone());
+
+        let mut c_list = NonRevocProofCListVA { c_dash, d_t, c_bar, c_v, c_x, c_d_dash };
 
         // sample params for T values
         let mut tau_list_params = NonRevocProofXListVA {
@@ -588,13 +602,27 @@ impl ProofBuilder {
             d_dash: FieldElement::random(),
             x: FieldElement::random(),
             beta: FieldElement::random(),
-            y: FieldElement::one()
+            y: FieldElement::random(),
+            r_u: FieldElement::random(),
+            r_v: FieldElement::random(),
+            r_t: FieldElement::random(),
+            r_dash: FieldElement::random(),
+            r_x: FieldElement::random(),
+            r_beta: FieldElement::random()
         };
 
         // create T list values.
         let t1 = tau_list_params.t.clone() * cred_rev_pub_key.p.clone() + tau_list_params.y.clone() * c_list.c_dash.clone();
         let t2 = tau_list_params.d_dash.clone() * cred_rev_pub_key.p.clone() + tau_list_params.v.clone() * c_list.d_t.clone();
-        let tau_list = NonRevocProofTauListVA {t1, t2};
+        let t3 = tau_list_params.v.clone()*cred_rev_pub_key.x.clone() + tau_list_params.r_v.clone()*cred_rev_pub_key.y.clone();
+        let t4 = tau_list_params.d_dash.clone()*cred_rev_pub_key.x.clone() + tau_list_params.r_dash.clone()*cred_rev_pub_key.y.clone();
+        let t5 = tau_list_params.x.clone()*cred_rev_pub_key.x.clone() + tau_list_params.r_x.clone()*cred_rev_pub_key.y.clone();
+        let t6 = tau_list_params.t.clone()*c_list.c_v.clone() + tau_list_params.r_t.clone()*cred_rev_pub_key.y.clone();
+        let t7 = tau_list_params.u.clone()*c_list.c_v.clone() + tau_list_params.r_u.clone()*cred_rev_pub_key.y.clone();
+        let t8 = tau_list_params.beta.clone()*c_list.c_x.clone() + tau_list_params.r_beta.clone()*cred_rev_pub_key.y.clone();
+
+
+        let tau_list = NonRevocProofTauListVA {t1, t2, t3, t4, t5, t6, t7, t8};
 
         let r_init_proof = NonRevocInitProofVA {
             c_list_params,
@@ -628,8 +656,18 @@ impl ProofBuilder {
         let x_hat = init_proof.tau_list_params.x.clone() + ch_num_z.clone() * init_proof.c_list_params.x.clone();
         let beta_hat = init_proof.tau_list_params.beta.clone() + ch_num_z.clone() * init_proof.c_list_params.beta.clone();
         let y_hat = init_proof.tau_list_params.y.clone() - ch_num_z.clone() * init_proof.c_list_params.y.clone();
+        let r_u_hat = init_proof.tau_list_params.r_u.clone() + ch_num_z.clone() * init_proof.c_list_params.r_u.clone();
+        let r_v_hat = init_proof.tau_list_params.r_v.clone() + ch_num_z.clone() * init_proof.c_list_params.r_v.clone();
+        let r_t_hat = init_proof.tau_list_params.r_t.clone() + ch_num_z.clone() * init_proof.c_list_params.r_t.clone();
+        let r_dash_hat = init_proof.tau_list_params.r_dash.clone() + ch_num_z.clone() * init_proof.c_list_params.r_dash.clone();
+        let r_x_hat = init_proof.tau_list_params.r_x.clone() + ch_num_z.clone() * init_proof.c_list_params.r_x.clone();
+        let r_beta_hat = init_proof.tau_list_params.r_beta.clone() + ch_num_z.clone() * init_proof.c_list_params.r_beta.clone();
 
-        x_list.extend_from_slice(&[u_hat, v_hat, t_hat, d_hat, d_dash_hat, x_hat, beta_hat, y_hat]);
+
+
+        x_list.extend_from_slice(&[u_hat, v_hat, t_hat, d_hat, d_dash_hat, x_hat, beta_hat, y_hat, r_u_hat,
+            r_v_hat, r_t_hat, r_dash_hat, r_x_hat, r_beta_hat]);
+
         let non_revoc_proof = NonRevocProofVA {
             x_list: NonRevocProofXListVA::from_list(x_list.as_slice()),
             c_list: init_proof.c_list.clone(),

@@ -627,14 +627,27 @@ impl SimpleTailsAccessor {
     }
 }
 
+#[derive(Debug, Clone)]
+#[cfg_attr(feature="serde", derive(Serialize, Deserialize))]
 pub struct NoOpRevocationTailsAccessor {
     tails: Vec<Tail>,
+    domain: FieldElementVector,
 }
 
 impl NoOpRevocationTailsAccessor {
     pub fn new() -> Self {
-        NoOpRevocationTailsAccessor { tails: Vec::new() }
+        NoOpRevocationTailsAccessor { tails: Vec::new(), domain: FieldElementVector::new(0) }
     }
+
+    pub fn from_domain(domain: &FieldElementVector) -> Self {
+        NoOpRevocationTailsAccessor { tails: Vec::new(), domain: domain.clone() }
+    }
+
+    pub fn get_domain(&self) -> &FieldElementVector {
+        &self.domain
+    }
+
+
 }
 
 impl RevocationTailsAccessor for NoOpRevocationTailsAccessor {
@@ -1624,7 +1637,7 @@ impl AuxiliaryParams {
     pub fn unwrap_va(&mut self) -> Option<NoOpRevocationTailsAccessor> {
         let mut noop_tails_accessor: Option<NoOpRevocationTailsAccessor> = None;
         if let AuxiliaryParams::VA(ref mut edomain) = self {
-            noop_tails_accessor = Some(NoOpRevocationTailsAccessor::new());
+            noop_tails_accessor = Some(NoOpRevocationTailsAccessor::from_domain(edomain));
         }
         noop_tails_accessor
 
@@ -2061,7 +2074,13 @@ pub struct NonRevocProofXListVA {
     d_dash: FieldElement,   // d'=d+vt
     x: FieldElement,        // x = -d
     beta: FieldElement,     // beta = x.inverse()
-    y: FieldElement        // y = m2 is the accumulated element
+    y: FieldElement,        // y = m2 is the accumulated element
+    r_u: FieldElement,
+    r_v: FieldElement,
+    r_t: FieldElement,
+    r_dash: FieldElement,
+    r_x: FieldElement,
+    r_beta: FieldElement
 }
 
 impl NonRevocProofXListVA {
@@ -2075,7 +2094,13 @@ impl NonRevocProofXListVA {
                 self.d_dash.clone(),
                 self.x.clone(),
                 self.beta.clone(),
-                self.y.clone()
+                self.y.clone(),
+                self.r_u.clone(),
+                self.r_v.clone(),
+                self.r_t.clone(),
+                self.r_dash.clone(),
+                self.r_x.clone(),
+                self.r_beta.clone()
             ]
         )
     }
@@ -2090,6 +2115,12 @@ impl NonRevocProofXListVA {
             x: seq[5].clone(),
             beta: seq[6].clone(),
             y: seq[7].clone(),
+            r_u: seq[8].clone(),
+            r_v: seq[9].clone(),
+            r_t: seq[10].clone(),
+            r_dash: seq[11].clone(),
+            r_x: seq[12].clone(),
+            r_beta: seq[13].clone()
         }
     }
 }
@@ -2101,6 +2132,9 @@ pub struct NonRevocProofCListVA {
     c_dash: G1,             // C^u
     d_t: G1,                // b^u.P^{-t}
     c_bar: G1,              // (C')^{-y}.b^u
+    c_v: G1,                // G^v.H^r_v
+    c_x: G1,                // G^x.H^r_x
+    c_d_dash: G1,             // G^{d'}H^{r'}
 }
 
 impl NonRevocProofCListVA {
@@ -2109,7 +2143,10 @@ impl NonRevocProofCListVA {
             //self.b.to_bytes(false),
             self.c_dash.to_bytes(false),
             self.d_t.to_bytes(false),
-            self.c_bar.to_bytes(false)
+            self.c_bar.to_bytes(false),
+            self.c_v.to_bytes(false),
+            self.c_x.to_bytes(false),
+            self.c_d_dash.to_bytes(false)
         ])
     }
 }
@@ -2119,6 +2156,12 @@ impl NonRevocProofCListVA {
 pub struct NonRevocProofTauListVA {
     t1: G1,
     t2: G1,
+    t3: G1,
+    t4: G1,
+    t5: G1,
+    t6: G1,
+    t7: G1,
+    t8: G1,
 }
 
 impl NonRevocProofTauListVA {
@@ -2126,6 +2169,12 @@ impl NonRevocProofTauListVA {
         Ok(vec![
             self.t1.to_bytes(false),
             self.t2.to_bytes(false),
+            self.t3.to_bytes(false),
+            self.t4.to_bytes(false),
+            self.t5.to_bytes(false),
+            self.t6.to_bytes(false),
+            self.t7.to_bytes(false),
+            self.t8.to_bytes(false),
         ])
     }
 }

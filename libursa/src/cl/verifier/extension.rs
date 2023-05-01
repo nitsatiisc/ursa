@@ -379,6 +379,80 @@ impl ProofVerifier {
 
     }
 
+    /// Non revocation proof verification for the VA revocation scheme
+    ///
+    ///
+    fn _verify_non_revocation_proof_va(
+        r_pub_key: &CredentialRevocationPublicKeyVA,
+        rev_reg: &RevocationRegistryVA,
+        rev_key_pub: &RevocationKeyPublicVA,
+        c_hash: &BigNumber,
+        proof: &NonRevocProofVA,
+    ) -> UrsaCryptoResult<NonRevocProofTauListVA> {
+
+        let ch_num_z = FieldElement::from_bytes(&c_hash.to_bytes()?).unwrap();
+        /*
+        let t_hat_expected_values =
+            create_tau_list_expected_values(r_pub_key, rev_reg, rev_key_pub, &proof.c_list)?;
+        let t_hat_calc_values =
+            create_tau_list_values(r_pub_key, rev_reg, &proof.x_list, &proof.c_list)?;
+
+
+         */
+
+        let t1_hat = proof.x_list.y.clone() * proof.c_list.c_dash.clone() + proof.x_list.t.clone() * r_pub_key.p.clone();
+        let t2_hat = proof.x_list.v.clone() * proof.c_list.d_t.clone() + proof.x_list.d_dash.clone() * r_pub_key.p.clone();
+        let t3_hat = proof.x_list.v.clone() * r_pub_key.x.clone() + proof.x_list.r_v.clone() * r_pub_key.y.clone();
+        let t4_hat = proof.x_list.d_dash.clone() * r_pub_key.x.clone() + proof.x_list.r_dash.clone() * r_pub_key.y.clone();
+        let t5_hat= proof.x_list.x.clone() * r_pub_key.x.clone() + proof.x_list.r_x.clone() * r_pub_key.y.clone();
+        let t6_hat = proof.x_list.t.clone()*proof.c_list.c_v.clone() + proof.x_list.r_t.clone() * r_pub_key.y.clone();
+        let t7_hat = proof.x_list.u.clone()*proof.c_list.c_v.clone() + proof.x_list.r_u.clone() * r_pub_key.y.clone();
+        let t8_hat = proof.x_list.beta.clone()*proof.c_list.c_x.clone() + proof.x_list.r_beta.clone() * r_pub_key.y.clone();
+
+        let t_hat_expected_values = NonRevocProofTauListVA {
+            t1: t1_hat,
+            t2: t2_hat,
+            t3: t3_hat,
+            t4: t4_hat,
+            t5: t5_hat,
+            t6: t6_hat,
+            t7: t7_hat,
+            t8: t8_hat
+        };
+
+
+        let t1_rhs = proof.c_list.c_bar.clone() - proof.c_list.d_t.clone();
+        let t2_rhs = rev_reg.accum.clone();
+        let t3_rhs = proof.c_list.c_v.clone();
+        let t4_rhs = proof.c_list.c_d_dash.clone();
+        let t5_rhs = proof.c_list.c_x.clone();
+        let t6_rhs = proof.c_list.c_x.clone() + proof.c_list.c_d_dash.clone();
+        let t7_rhs = r_pub_key.x.clone();
+        let t8_rhs = r_pub_key.x.clone();
+
+        let t1_calc = t_hat_expected_values.t1 - ch_num_z.clone() * t1_rhs;
+        let t2_calc = t_hat_expected_values.t2 - ch_num_z.clone() * t2_rhs;
+        let t3_calc = t_hat_expected_values.t3 - ch_num_z.clone() * t3_rhs;
+        let t4_calc = t_hat_expected_values.t4 - ch_num_z.clone() * t4_rhs;
+        let t5_calc = t_hat_expected_values.t5 - ch_num_z.clone() * t5_rhs;
+        let t6_calc = t_hat_expected_values.t6 - ch_num_z.clone() * t6_rhs;
+        let t7_calc = t_hat_expected_values.t7 - ch_num_z.clone() * t7_rhs;
+        let t8_calc = t_hat_expected_values.t8 - ch_num_z.clone() * t8_rhs;
+
+
+        let non_revoc_proof_tau_list = Ok(NonRevocProofTauListVA {
+            t1: t1_calc,
+            t2: t2_calc,
+            t3: t3_calc,
+            t4: t4_calc,
+            t5: t5_calc,
+            t6: t6_calc,
+            t7: t7_calc,
+            t8: t8_calc
+        });
+
+        non_revoc_proof_tau_list
+    }
 }
 
 

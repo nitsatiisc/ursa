@@ -869,7 +869,7 @@ mod my_benchmarks {
 
 
         // verify the updated credential
-        let check = verify_non_mem_witness(
+        let check = Verifier::verify_non_mem_witness(
             &cred_pub_key.get_revocation_key().unwrap().unwrap(),
             &reg_pub_key,
             &rev_reg,
@@ -1121,7 +1121,7 @@ mod my_benchmarks {
             GenRevocationKeyPublic::VA(ref reg_pub_key_va), GenRevocationRegistry::VA(ref rev_reg_va),
                 GenCredentialSignature::VA(ref cred_signature_va)) =
             (&cred_pub_key, &reg_pub_key, &rev_reg, &cred_signature) {
-            check = verify_non_mem_witness(
+            check = Verifier::verify_non_mem_witness(
                 &cred_pub_key_va.get_revocation_key().unwrap().unwrap(),
                 reg_pub_key_va,
                 rev_reg_va,
