@@ -145,7 +145,7 @@ impl Issuer {
         if let (
             GenCredentialPublicKey::CKS(cred_pub_key),
             GenCredentialPrivateKey::CKS(cred_priv_key),
-            GenRevocationRegistry::CKS(mut revoc_reg),
+            GenRevocationRegistry::CKS(ref mut revoc_reg),
             GenRevocationKeyPrivate::CKS(rev_private_key)
         ) = (credential_pub_key, credential_priv_key, rev_reg.clone(), reg_priv_key) {
             // delegate to CKS function
@@ -161,11 +161,11 @@ impl Issuer {
                 rev_idx,
                 max_cred_num,
                 issuance_by_default,
-                &mut revoc_reg,
+                revoc_reg,
                 rev_private_key,
                 rev_tails_accessor
             ) {
-                rev_reg.clone_from(&GenRevocationRegistry::CKS(revoc_reg));
+                //rev_reg.clone_from(&GenRevocationRegistry::CKS(revoc_reg));
 
                 return if rev_reg_delta.is_some() {
                     Ok((
@@ -187,7 +187,7 @@ impl Issuer {
         if let (
             GenCredentialPublicKey::VA(cred_pub_key),
             GenCredentialPrivateKey::VA(cred_priv_key),
-            GenRevocationRegistry::VA(revoc_reg),
+            GenRevocationRegistry::VA(ref mut revoc_reg),
             GenRevocationKeyPrivate::VA(rev_private_key)
         ) = (credential_pub_key, credential_priv_key, rev_reg.clone(), reg_priv_key) {
             // delegat to VA function
@@ -203,10 +203,10 @@ impl Issuer {
                 rev_idx,
                 max_cred_num,
                 issuance_by_default,
-                &revoc_reg,
+                revoc_reg,
                 rev_private_key
             ) {
-                rev_reg.clone_from(&GenRevocationRegistry::VA(revoc_reg));
+                //rev_reg.clone_from(&GenRevocationRegistry::VA(revoc_reg));
                 return Ok((GenCredentialSignature::VA(cred_signature), signature_correctness_proof, None));
             }
         }
@@ -436,8 +436,8 @@ impl Issuer {
         }
 
         let accum = faccum * cred_pub_key.r_key.clone().unwrap().p;
-        let rev_reg = RevocationRegistryVA { accum: accum.clone() };
-        let evaluation_domain = FieldElementVector::random(max_batch_size as usize);
+        let rev_reg = RevocationRegistryVA { accum: accum.clone(), revoked: HashSet::new() };
+        let evaluation_domain = FieldElementVector::random(max_batch_size as usize + 1);
 
 
         Ok((rev_pub_key, rev_priv_key, rev_reg, evaluation_domain))

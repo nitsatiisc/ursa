@@ -298,6 +298,7 @@ mod test_generic {
     mod tests {
         use std::iter::FromIterator;
         use ursa::cl::CredentialKeyCorrectnessProof;
+        use ursa::cl::verifier::extension::verify_non_mem_witness;
         use super::*;
 
         #[test]
@@ -305,7 +306,7 @@ mod test_generic {
         {
             let credential_schema = get_credential_schema();
             let non_credential_schema = get_non_credential_schema();
-            let max_cred_num = 100u32;
+            let max_cred_num = 100000u32;
             let issuance_by_default = true;
             let max_batch_size = 10u32;
 
@@ -732,6 +733,397 @@ mod test_generic {
             }
         }
 
+        #[test]
+        fn test_revoke_and_proof_cks() {
+            // Basic testing and benchmarking setup
+            let credential_schema = get_credential_schema();
+            let non_credential_schema = get_non_credential_schema();
+            let max_cred_num = 1000u32;
+            let issuance_by_default = true;
+            let max_batch_size = 10u32;
+            let num_signatures = 20u32;
+
+            // 1. Create credential definition
+            let (credential_public_key, credential_private_key,
+                credential_key_correctness_proof) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::CKS
+                ).unwrap();
+
+            // 2. Create Registry Definition
+            let (registry_public_key, registry_private_key, mut rev_registry, mut aux_params) =
+                Issuer::new_revocation_registry_generic(
+                    &credential_public_key,
+                    max_cred_num,
+                    issuance_by_default,
+                    max_batch_size,
+                ).unwrap();
+
+            let simple_tails_accessor = aux_params.unwrap_cks().unwrap();
+            let mut rev_reg_delta_init_cks = RevocationRegistryDelta::from_parts(
+                None,
+                rev_registry.unwrap_cks().unwrap(),
+                &HashSet::<u32>::from_iter((1..=max_cred_num).into_iter()),
+                &HashSet::<u32>::new()
+            );
+
+            // 3. Issue credentials
+            let mut prover_data: Vec<GenProverData> = Vec::new();
+            for rev_idx in 1..=num_signatures {
+                // 3.0 Holder chooses credential values
+                let credential_values = get_credential_values(&Prover::new_master_secret().unwrap());
+                let credential_blinding_nonce = new_nonce().unwrap();
+                // 3.1 Holder blinds secret values
+                let (
+                    blinded_credential_secrets,
+                    credential_secrets_blinding_factors,
+                    credential_blinding_correctness_proof
+                ) = Prover::blind_credential_secrets_generic(
+                    &credential_public_key,
+                    &credential_key_correctness_proof,
+                    &credential_values,
+                    &credential_blinding_nonce,
+                ).unwrap();
+
+                // 3.2 Holder requests a signature
+                let credential_nonce = new_nonce().unwrap();
+                let (mut credential_signature, credential_signature_correctness_proof, rev_reg_delta) =
+                    Issuer::sign_credential_with_revoc_generic(
+                        &rev_idx.to_string(),
+                        &blinded_credential_secrets,
+                        &credential_blinding_correctness_proof,
+                        &credential_blinding_nonce,
+                        &credential_nonce,
+                        &credential_values,
+                        &credential_public_key,
+                        &credential_private_key,
+                        rev_idx,
+                        max_cred_num,
+                        issuance_by_default,
+                        &mut rev_registry,
+                        &registry_private_key,
+                        &simple_tails_accessor
+                    ).unwrap();
+
+                // 3.3 Calculate witness (this specific to revocation scheme)
+                let mut witness = Witness::new(
+                    rev_idx,
+                    max_cred_num,
+                    false,
+                    &rev_reg_delta_init_cks,
+                    &simple_tails_accessor,
+                ).unwrap();
+                // wrap the witness into a generic witness
+                let mut witness = GenWitness::CKS(witness);
+
+                // 3.4 Post process the credential
+                Prover::process_credential_signature_generic(
+                    &mut credential_signature,
+                    &credential_values,
+                    &credential_signature_correctness_proof,
+                    &credential_secrets_blinding_factors,
+                    &credential_public_key,
+                    &credential_nonce,
+                    Some(&registry_public_key),
+                    Some(&rev_registry),
+                    Some(&witness)
+                ).unwrap();
+
+                prover_data.push((rev_idx, credential_values, credential_signature, Some(witness)));
+            }
+
+            // 5. Create proof presentation
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            let sub_proof_request = get_sub_proof_request();
+            let proofs = gen_proofs_generic(
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                &sub_proof_request,
+                &nonces,
+                &rev_registry,
+                &mut prover_data
+            );
+
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request,
+                    &credential_schema,
+                    &non_credential_schema,
+                    &credential_public_key,
+                    Some(&registry_public_key),
+                    Some(&rev_registry)
+                ).unwrap();
+
+            for i in 0..proofs.len() {
+                println!("Verification result for proof {} is {}", i,
+                         verifier.verify_generic(&proofs[i], &nonces[i]).unwrap());
+            }
+
+            // Now we revoke credentials 1..max_batch_size
+            let revoke_delta = Issuer::update_revocation_registry(
+            rev_registry.unwrap_cks().unwrap(), // gets &mut ref to underlying rev_reg_cks
+            max_cred_num,
+            BTreeSet::<u32>::new(),
+            BTreeSet::<u32>::from_iter((1..=max_batch_size).into_iter()),
+            &simple_tails_accessor
+            ).unwrap();
+
+            // Update the witnesses
+            for i in 0..prover_data.len() {
+                let rev_idx = prover_data[i].0;
+                prover_data[i].3.as_mut().unwrap().unwrap_cks().unwrap().update(
+                    rev_idx,
+                    max_cred_num,
+                    &revoke_delta,
+                    &simple_tails_accessor
+                ).unwrap();
+            }
+
+            // Create and verify presentations again after revocation
+
+            // 5. Create proof presentation
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            let sub_proof_request = get_sub_proof_request();
+            let proofs = gen_proofs_generic(
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                &sub_proof_request,
+                &nonces,
+                &rev_registry,
+                &mut prover_data
+            );
+
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request,
+                    &credential_schema,
+                    &non_credential_schema,
+                    &credential_public_key,
+                    Some(&registry_public_key),
+                    Some(&rev_registry)
+                ).unwrap();
+
+            for i in 0..proofs.len() {
+                println!("Verification result for proof {} is {}", i,
+                         verifier.verify_generic(&proofs[i], &nonces[i]).unwrap());
+            }
+
+        }
+
+        #[test]
+        fn test_revoke_and_proof_va() {
+            // Basic testing and benchmarking setup
+            let credential_schema = get_credential_schema();
+            let non_credential_schema = get_non_credential_schema();
+            let max_cred_num = 1000u32;
+            let issuance_by_default = true;
+            let max_batch_size = 10u32;
+            let num_signatures = 20u32;
+
+            // 1. Create credential definition
+            let (credential_public_key, credential_private_key,
+                credential_key_correctness_proof) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::VA
+                ).unwrap();
+
+            // 2. Create Registry Definition
+            let (registry_public_key, registry_private_key, mut rev_registry, mut aux_params) =
+                Issuer::new_revocation_registry_generic(
+                    &credential_public_key,
+                    max_cred_num,
+                    issuance_by_default,
+                    max_batch_size,
+                ).unwrap();
+
+            let simple_tails_accessor = aux_params.unwrap_va().unwrap();
+            // Create registry object for Issuer
+            let mut va_registry = VARegistry::new(&rev_registry.unwrap_va().cloned().unwrap());
+
+            // 3. Issue credentials
+            let mut prover_data: Vec<GenProverData> = Vec::new();
+            for rev_idx in 1..=num_signatures {
+                // 3.0 Holder chooses credential values
+                let credential_values = get_credential_values(&Prover::new_master_secret().unwrap());
+                let credential_blinding_nonce = new_nonce().unwrap();
+                // 3.1 Holder blinds secret values
+                let (
+                    blinded_credential_secrets,
+                    credential_secrets_blinding_factors,
+                    credential_blinding_correctness_proof
+                ) = Prover::blind_credential_secrets_generic(
+                    &credential_public_key,
+                    &credential_key_correctness_proof,
+                    &credential_values,
+                    &credential_blinding_nonce,
+                ).unwrap();
+
+                // 3.2 Holder requests a signature
+                let credential_nonce = new_nonce().unwrap();
+                let (mut credential_signature, credential_signature_correctness_proof, rev_reg_delta) =
+                    Issuer::sign_credential_with_revoc_generic(
+                        &rev_idx.to_string(),
+                        &blinded_credential_secrets,
+                        &credential_blinding_correctness_proof,
+                        &credential_blinding_nonce,
+                        &credential_nonce,
+                        &credential_values,
+                        &credential_public_key,
+                        &credential_private_key,
+                        rev_idx,
+                        max_cred_num,
+                        issuance_by_default,
+                        &mut rev_registry,
+                        &registry_private_key,
+                        &simple_tails_accessor
+                    ).unwrap();
+
+
+
+                // 3.4 Post process the credential
+                Prover::process_credential_signature_generic(
+                    &mut credential_signature,
+                    &credential_values,
+                    &credential_signature_correctness_proof,
+                    &credential_secrets_blinding_factors,
+                    &credential_public_key,
+                    &credential_nonce,
+                    Some(&registry_public_key),
+                    Some(&rev_registry),
+                    None
+                ).unwrap();
+
+                prover_data.push((rev_idx, credential_values, credential_signature.try_clone().unwrap(), None));
+                /*
+                let check = verify_non_mem_witness(
+                    &credential_public_key.unwrap_va().unwrap().get_revocation_key().unwrap().unwrap(),
+                    registry_public_key.unwrap_va().unwrap(),
+                    &rev_registry.unwrap_va().unwrap().clone(),
+                    &credential_signature.unwrap_va().unwrap().r_credential.as_ref().unwrap().witness.clone(),
+                    rev_idx);
+                println!("Check: {}", check);
+
+                 */
+            }
+
+            // 5. Create proof presentation
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            let sub_proof_request = get_sub_proof_request();
+            let proofs = gen_proofs_generic(
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                &sub_proof_request,
+                &nonces,
+                &rev_registry,
+                &mut prover_data
+            );
+
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request,
+                    &credential_schema,
+                    &non_credential_schema,
+                    &credential_public_key,
+                    Some(&registry_public_key),
+                    Some(&rev_registry)
+                ).unwrap();
+
+            for i in 0..proofs.len() {
+                println!("Verification result for proof {} is {}", i,
+                         verifier.verify_generic(&proofs[i], &nonces[i]).unwrap());
+            }
+
+
+            // Now we revoke credentials 1..max_batch_size
+            let revoke_delta = va_registry.revoke(
+                &registry_private_key.unwrap_va().unwrap(),
+                &simple_tails_accessor.get_domain(),
+                &Vec::<u32>::from_iter((1..=max_batch_size).into_iter())
+            ).unwrap();
+
+            // Issuer updates the registry
+            rev_registry = GenRevocationRegistry::VA(RevocationRegistryVA::from_delta(&revoke_delta));
+
+            // Holders update the witness
+
+            for i in 0..prover_data.len() {
+                let rev_idx = prover_data[i].0;
+                let m2 = prover_data[i].2.unwrap_va().unwrap().r_credential.as_ref().unwrap().m2.clone();
+
+                let ldomain = LagrangianDomain::from_parts(
+                    simple_tails_accessor.get_domain(),
+                    &FieldElement::from(rev_idx)
+                ).unwrap();
+
+                prover_data[i].2.unwrap_va().unwrap().r_credential.as_mut().unwrap().witness.update(
+                    &revoke_delta,
+                    &ldomain
+                ).unwrap();
+            }
+
+            // Create and verify presentations again after revocation
+
+            // 5. Create proof presentation
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            let sub_proof_request = get_sub_proof_request();
+            let proofs = gen_proofs_generic(
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                &sub_proof_request,
+                &nonces,
+                &rev_registry,
+                &mut prover_data
+            );
+
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request,
+                    &credential_schema,
+                    &non_credential_schema,
+                    &credential_public_key,
+                    Some(&registry_public_key),
+                    Some(&rev_registry)
+                ).unwrap();
+
+            for i in 0..proofs.len() {
+                println!("Verification result for proof {} is {}", i,
+                         verifier.verify_generic(&proofs[i], &nonces[i]).unwrap());
+            }
+
+
+
+
+        }
 
         #[test]
         fn test_compatibility_with_existing()
@@ -1046,6 +1438,7 @@ mod test_generic {
 
     #[cfg(test)]
     mod benchmarks {
+        use std::iter::FromIterator;
         use super::*;
 
         #[test]
@@ -1116,33 +1509,1032 @@ mod test_generic {
 
         #[test]
         /// registry_size = 100K, 1000K
-        fn bench_issuer_sign_with_revok_cks() {}
+        fn bench_issuer_sign_with_revok_cks() {
+            // Basic testing and benchmarking setup
+            let credential_schema = get_credential_schema();
+            let non_credential_schema = get_non_credential_schema();
+            let max_cred_num = 100000u32;
+            let issuance_by_default = true;
+            let max_batch_size = 10u32;
+            let num_signatures = 1000u32;
+
+            // 1. Create credential definition
+            let (credential_public_key, credential_private_key,
+                credential_key_correctness_proof) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::CKS
+                ).unwrap();
+
+            // 2. Create Registry Definition
+            let (registry_public_key, registry_private_key, mut rev_registry, mut aux_params) =
+                Issuer::new_revocation_registry_generic(
+                    &credential_public_key,
+                    max_cred_num,
+                    issuance_by_default,
+                    max_batch_size,
+                ).unwrap();
+
+            let simple_tails_accessor = aux_params.unwrap_cks().unwrap();
+            let mut rev_reg_delta_init_cks = RevocationRegistryDelta::from_parts(
+                None,
+                rev_registry.unwrap_cks().unwrap(),
+                &HashSet::<u32>::from_iter((1..=max_cred_num).into_iter()),
+                &HashSet::<u32>::new()
+            );
+
+            // 3. Issue credentials
+            println!("Issuing {} credentials now", num_signatures);
+            let mut start = Instant::now();
+            for rev_idx in 1..=num_signatures {
+                // 3.0 Holder chooses credential values
+                let credential_values = get_credential_values(&Prover::new_master_secret().unwrap());
+                let credential_blinding_nonce = new_nonce().unwrap();
+                // 3.1 Holder blinds secret values
+                let (
+                    blinded_credential_secrets,
+                    credential_secrets_blinding_factors,
+                    credential_blinding_correctness_proof
+                ) = Prover::blind_credential_secrets_generic(
+                    &credential_public_key,
+                    &credential_key_correctness_proof,
+                    &credential_values,
+                    &credential_blinding_nonce,
+                ).unwrap();
+
+                // 3.2 Holder requests a signature
+                let credential_nonce = new_nonce().unwrap();
+                let (mut credential_signature, credential_signature_correctness_proof, rev_reg_delta) =
+                    Issuer::sign_credential_with_revoc_generic(
+                        &rev_idx.to_string(),
+                        &blinded_credential_secrets,
+                        &credential_blinding_correctness_proof,
+                        &credential_blinding_nonce,
+                        &credential_nonce,
+                        &credential_values,
+                        &credential_public_key,
+                        &credential_private_key,
+                        rev_idx,
+                        max_cred_num,
+                        issuance_by_default,
+                        &mut rev_registry,
+                        &registry_private_key,
+                        &simple_tails_accessor
+                    ).unwrap();
+            }
+            println!("Time to issue {} CKS signatures {:?}", num_signatures, start.elapsed());
+        }
 
         #[test]
         /// registry_size = 100K, 1000K
-        fn bench_issuer_sign_with_revok_va() {}
+        fn bench_issuer_sign_with_revok_va() {
+            // Basic testing and benchmarking setup
+            let credential_schema = get_credential_schema();
+            let non_credential_schema = get_non_credential_schema();
+            let max_cred_num = 100000u32;
+            let issuance_by_default = true;
+            let max_batch_size = 10u32;
+            let num_signatures = 1000u32;
+
+            // 1. Create credential definition
+            let (credential_public_key, credential_private_key,
+                credential_key_correctness_proof) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::VA
+                ).unwrap();
+
+            // 2. Create Registry Definition
+            let (registry_public_key, registry_private_key, mut rev_registry, mut aux_params) =
+                Issuer::new_revocation_registry_generic(
+                    &credential_public_key,
+                    max_cred_num,
+                    issuance_by_default,
+                    max_batch_size,
+                ).unwrap();
+
+            let simple_tails_accessor = aux_params.unwrap_va().unwrap();
+
+            // 3. Issue credentials
+            println!("Issuing {} credentials now", num_signatures);
+            let mut start = Instant::now();
+            for rev_idx in 1..=num_signatures {
+                // 3.0 Holder chooses credential values
+                let credential_values = get_credential_values(&Prover::new_master_secret().unwrap());
+                let credential_blinding_nonce = new_nonce().unwrap();
+                // 3.1 Holder blinds secret values
+                let (
+                    blinded_credential_secrets,
+                    credential_secrets_blinding_factors,
+                    credential_blinding_correctness_proof
+                ) = Prover::blind_credential_secrets_generic(
+                    &credential_public_key,
+                    &credential_key_correctness_proof,
+                    &credential_values,
+                    &credential_blinding_nonce,
+                ).unwrap();
+
+                // 3.2 Holder requests a signature
+                let credential_nonce = new_nonce().unwrap();
+                let (mut credential_signature, credential_signature_correctness_proof, rev_reg_delta) =
+                    Issuer::sign_credential_with_revoc_generic(
+                        &rev_idx.to_string(),
+                        &blinded_credential_secrets,
+                        &credential_blinding_correctness_proof,
+                        &credential_blinding_nonce,
+                        &credential_nonce,
+                        &credential_values,
+                        &credential_public_key,
+                        &credential_private_key,
+                        rev_idx,
+                        max_cred_num,
+                        issuance_by_default,
+                        &mut rev_registry,
+                        &registry_private_key,
+                        &simple_tails_accessor
+                    ).unwrap();
+            }
+            println!("Time to issue {} VA signatures {:?}", num_signatures, start.elapsed());
+        }
+
+        #[test]
+        /// Generate registry delta for a revocation batch
+        fn bench_issuer_generate_delta_cks() {
+            // Basic testing and benchmarking setup
+            let credential_schema = get_credential_schema();
+            let non_credential_schema = get_non_credential_schema();
+            let max_cred_num = 10000u32;
+            let issuance_by_default = true;
+            let max_batch_size = 100u32;
+            let num_signatures = 1000u32;
+
+            // do the setup
+            // 1. Create credential definition
+            let (credential_public_key, credential_private_key,
+                credential_key_correctness_proof) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::CKS
+                ).unwrap();
+
+            // 2. Create Registry Definition
+            let (registry_public_key, registry_private_key, mut rev_registry, mut aux_params) =
+                Issuer::new_revocation_registry_generic(
+                    &credential_public_key,
+                    max_cred_num,
+                    issuance_by_default,
+                    max_batch_size,
+                ).unwrap();
+
+            let simple_tails_accessor = aux_params.unwrap_cks().unwrap();
+            let mut rev_reg_delta_init_cks = RevocationRegistryDelta::from_parts(
+                None,
+                rev_registry.unwrap_cks().unwrap(),
+                &HashSet::<u32>::from_iter((1..=max_cred_num).into_iter()),
+                &HashSet::<u32>::new()
+            );
+
+            // 3. Issue credentials
+            println!("Issuing {} credentials now", num_signatures);
+            let mut start = Instant::now();
+            for rev_idx in 1..=num_signatures {
+                // 3.0 Holder chooses credential values
+                let credential_values = get_credential_values(&Prover::new_master_secret().unwrap());
+                let credential_blinding_nonce = new_nonce().unwrap();
+                // 3.1 Holder blinds secret values
+                let (
+                    blinded_credential_secrets,
+                    credential_secrets_blinding_factors,
+                    credential_blinding_correctness_proof
+                ) = Prover::blind_credential_secrets_generic(
+                    &credential_public_key,
+                    &credential_key_correctness_proof,
+                    &credential_values,
+                    &credential_blinding_nonce,
+                ).unwrap();
+
+                // 3.2 Holder requests a signature
+                let credential_nonce = new_nonce().unwrap();
+                let (mut credential_signature, credential_signature_correctness_proof, rev_reg_delta) =
+                    Issuer::sign_credential_with_revoc_generic(
+                        &rev_idx.to_string(),
+                        &blinded_credential_secrets,
+                        &credential_blinding_correctness_proof,
+                        &credential_blinding_nonce,
+                        &credential_nonce,
+                        &credential_values,
+                        &credential_public_key,
+                        &credential_private_key,
+                        rev_idx,
+                        max_cred_num,
+                        issuance_by_default,
+                        &mut rev_registry,
+                        &registry_private_key,
+                        &simple_tails_accessor
+                    ).unwrap();
+            }
+            println!("Time to issue {} CKS signatures {:?}", num_signatures, start.elapsed());
+
+            let mut rev_reg_cks = rev_registry.unwrap_cks().unwrap().clone();
+            println!("Now revoke credentials in batches of batch_size {}", max_batch_size);
+            let mut start = Instant::now();
+            let mut batch_start = 0u32;
+            for i in 0..5u32 {
+                let revoke_delta =
+                    Issuer::update_revocation_registry(
+                        &mut rev_reg_cks,
+                        max_cred_num,
+                        BTreeSet::<u32>::new(),
+                        BTreeSet::<u32>::from_iter((batch_start..(batch_start + max_batch_size)).into_iter()),
+                        &simple_tails_accessor
+                    ).unwrap();
+                batch_start = batch_start + max_batch_size;
+            }
+            println!("Time for 5 updates of batch size {} is {:?}", max_batch_size, start.elapsed());
+        }
+
+        #[test]
+        /// Generate registry delta for a revocation batch
+        fn bench_issuer_generate_delta_va() {
+            // Basic testing and benchmarking setup
+            let credential_schema = get_credential_schema();
+            let non_credential_schema = get_non_credential_schema();
+            let max_cred_num = 10000u32;
+            let issuance_by_default = true;
+            let max_batch_size = 100u32;
+            let num_signatures = 1000u32;
+
+            // do the setup
+            // 1. Create credential definition
+            let (credential_public_key, credential_private_key,
+                credential_key_correctness_proof) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::VA
+                ).unwrap();
+
+            // 2. Create Registry Definition
+            let (registry_public_key, registry_private_key, mut rev_registry, mut aux_params) =
+                Issuer::new_revocation_registry_generic(
+                    &credential_public_key,
+                    max_cred_num,
+                    issuance_by_default,
+                    max_batch_size,
+                ).unwrap();
+
+            let simple_tails_accessor = aux_params.unwrap_va().unwrap();
+
+
+            // 3. Issue credentials
+            println!("Issuing {} credentials now", num_signatures);
+            let mut start = Instant::now();
+            for rev_idx in 1..=num_signatures {
+                // 3.0 Holder chooses credential values
+                let credential_values = get_credential_values(&Prover::new_master_secret().unwrap());
+                let credential_blinding_nonce = new_nonce().unwrap();
+                // 3.1 Holder blinds secret values
+                let (
+                    blinded_credential_secrets,
+                    credential_secrets_blinding_factors,
+                    credential_blinding_correctness_proof
+                ) = Prover::blind_credential_secrets_generic(
+                    &credential_public_key,
+                    &credential_key_correctness_proof,
+                    &credential_values,
+                    &credential_blinding_nonce,
+                ).unwrap();
+
+                // 3.2 Holder requests a signature
+                let credential_nonce = new_nonce().unwrap();
+                let (mut credential_signature, credential_signature_correctness_proof, rev_reg_delta) =
+                    Issuer::sign_credential_with_revoc_generic(
+                        &rev_idx.to_string(),
+                        &blinded_credential_secrets,
+                        &credential_blinding_correctness_proof,
+                        &credential_blinding_nonce,
+                        &credential_nonce,
+                        &credential_values,
+                        &credential_public_key,
+                        &credential_private_key,
+                        rev_idx,
+                        max_cred_num,
+                        issuance_by_default,
+                        &mut rev_registry,
+                        &registry_private_key,
+                        &simple_tails_accessor
+                    ).unwrap();
+            }
+            println!("Time to issue {} VA signatures {:?}", num_signatures, start.elapsed());
+
+            let mut rev_reg_va = rev_registry.unwrap_va().unwrap();
+            let mut va_registry = VARegistry::new(rev_reg_va);
+            println!("Now revoke credentials in batches of batch_size {}", max_batch_size);
+            let mut start = Instant::now();
+            let mut batch_start = 0u32;
+            for i in 0..5u32 {
+                let revoke_delta =
+                    va_registry.revoke(
+                        registry_private_key.unwrap_va().unwrap(),
+                        simple_tails_accessor.get_domain(),
+                        &Vec::<u32>::from_iter((batch_start..(batch_start + max_batch_size)).into_iter())
+                    ).unwrap();
+            }
+            println!("Time for 5 updates of batch size {} is {:?}", max_batch_size, start.elapsed());
+        }
+
+        #[test]
+        fn bench_cks() {
+            // Basic testing and benchmarking setup
+            let credential_schema = get_credential_schema();
+            let non_credential_schema = get_non_credential_schema();
+            let max_cred_num = 100000u32;
+            let issuance_by_default = true;
+            let max_batch_size = 100u32;
+            let num_signatures = 100u32;
+
+            let mut total_process_sig = Duration::from_secs(0);
+            let mut total_prover_time = Duration::from_secs(0);
+            let mut total_verifier_time = Duration::from_secs(0);
+
+            // 1. Create credential definition
+            let (credential_public_key, credential_private_key,
+                credential_key_correctness_proof) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::CKS
+                ).unwrap();
+
+            // 2. Create Registry Definition
+            let (registry_public_key, registry_private_key, mut rev_registry, mut aux_params) =
+                Issuer::new_revocation_registry_generic(
+                    &credential_public_key,
+                    max_cred_num,
+                    issuance_by_default,
+                    max_batch_size,
+                ).unwrap();
+
+            let simple_tails_accessor = aux_params.unwrap_cks().unwrap();
+            let mut rev_reg_delta_init_cks = RevocationRegistryDelta::from_parts(
+                None,
+                rev_registry.unwrap_cks().unwrap(),
+                &HashSet::<u32>::from_iter((1..=max_cred_num).into_iter()),
+                &HashSet::<u32>::new()
+            );
+
+            // 3. Issue credentials
+            let mut prover_data: Vec<GenProverData> = Vec::new();
+            for rev_idx in 1..=num_signatures {
+                // 3.0 Holder chooses credential values
+                let credential_values = get_credential_values(&Prover::new_master_secret().unwrap());
+                let credential_blinding_nonce = new_nonce().unwrap();
+                // 3.1 Holder blinds secret values
+                let (
+                    blinded_credential_secrets,
+                    credential_secrets_blinding_factors,
+                    credential_blinding_correctness_proof
+                ) = Prover::blind_credential_secrets_generic(
+                    &credential_public_key,
+                    &credential_key_correctness_proof,
+                    &credential_values,
+                    &credential_blinding_nonce,
+                ).unwrap();
+
+                // 3.2 Holder requests a signature
+                let credential_nonce = new_nonce().unwrap();
+                let (mut credential_signature, credential_signature_correctness_proof, rev_reg_delta) =
+                    Issuer::sign_credential_with_revoc_generic(
+                        &rev_idx.to_string(),
+                        &blinded_credential_secrets,
+                        &credential_blinding_correctness_proof,
+                        &credential_blinding_nonce,
+                        &credential_nonce,
+                        &credential_values,
+                        &credential_public_key,
+                        &credential_private_key,
+                        rev_idx,
+                        max_cred_num,
+                        issuance_by_default,
+                        &mut rev_registry,
+                        &registry_private_key,
+                        &simple_tails_accessor
+                    ).unwrap();
+
+                // 3.3 Calculate witness (this specific to revocation scheme)
+                let mut start = Instant::now();
+                let mut witness = Witness::new(
+                    rev_idx,
+                    max_cred_num,
+                    false,
+                    &rev_reg_delta_init_cks,
+                    &simple_tails_accessor,
+                ).unwrap();
+                // wrap the witness into a generic witness
+                let mut witness = GenWitness::CKS(witness);
+
+                // 3.4 Post process the credential
+                Prover::process_credential_signature_generic(
+                    &mut credential_signature,
+                    &credential_values,
+                    &credential_signature_correctness_proof,
+                    &credential_secrets_blinding_factors,
+                    &credential_public_key,
+                    &credential_nonce,
+                    Some(&registry_public_key),
+                    Some(&rev_registry),
+                    Some(&witness)
+                ).unwrap();
+
+                total_process_sig += start.elapsed();
+
+                prover_data.push((rev_idx, credential_values, credential_signature, Some(witness)));
+            }
+
+            // 5. Create proof presentation
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            let sub_proof_request = get_sub_proof_request();
+            let mut start = Instant::now();
+            let proofs = gen_proofs_generic(
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                &sub_proof_request,
+                &nonces,
+                &rev_registry,
+                &mut prover_data
+            );
+            total_prover_time += start.elapsed();
+
+
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request,
+                    &credential_schema,
+                    &non_credential_schema,
+                    &credential_public_key,
+                    Some(&registry_public_key),
+                    Some(&rev_registry)
+                ).unwrap();
+
+            let mut start = Instant::now();
+            for i in 0..proofs.len() {
+                verifier.verify_generic(&proofs[i], &nonces[i]).unwrap();
+            }
+            total_verifier_time += start.elapsed();
+
+            println!("Total Signature Processing Time for {} signatures {:?}", num_signatures, total_process_sig);
+            println!("Total Prover Time for {} presentations {:?}", num_signatures, total_prover_time);
+            println!("Total Verifier Time for {} presentations {:?}", num_signatures, total_verifier_time);
+        }
+
+        #[test]
+        fn bench_va() {
+            // Basic testing and benchmarking setup
+            let credential_schema = get_credential_schema();
+            let non_credential_schema = get_non_credential_schema();
+            let max_cred_num = 100000u32;
+            let issuance_by_default = true;
+            let max_batch_size = 10u32;
+            let num_signatures = 100u32;
+
+            let mut total_prover_time = Duration::from_secs(0);
+            let mut total_verifier_time = Duration::from_secs(0);
+
+            // 1. Create credential definition
+            let (credential_public_key, credential_private_key,
+                credential_key_correctness_proof) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::VA
+                ).unwrap();
+
+            // 2. Create Registry Definition
+            let (registry_public_key, registry_private_key,
+                mut rev_registry, mut aux_params) =
+                Issuer::new_revocation_registry_generic(
+                    &credential_public_key,
+                    max_cred_num,
+                    issuance_by_default,
+                    max_batch_size,
+                ).unwrap();
+
+
+            // 3. Issue credentials
+            let mut prover_data: Vec<GenProverData> = Vec::new();
+            for rev_idx in 1..=num_signatures {
+                // 3.0 Holder chooses credential values
+                let credential_values = get_credential_values(&Prover::new_master_secret().unwrap());
+                let credential_blinding_nonce = new_nonce().unwrap();
+                // 3.1 Holder blinds secret values
+                let (
+                    blinded_credential_secrets,
+                    credential_secrets_blinding_factors,
+                    credential_blinding_correctness_proof
+                ) = Prover::blind_credential_secrets_generic(
+                    &credential_public_key,
+                    &credential_key_correctness_proof,
+                    &credential_values,
+                    &credential_blinding_nonce,
+                ).unwrap();
+
+                // 3.2 Holder requests a signature
+                let credential_nonce = new_nonce().unwrap();
+                let (mut credential_signature, credential_signature_correctness_proof,
+                    rev_reg_delta) =
+                    Issuer::sign_credential_with_revoc_generic(
+                        &rev_idx.to_string(),
+                        &blinded_credential_secrets,
+                        &credential_blinding_correctness_proof,
+                        &credential_blinding_nonce,
+                        &credential_nonce,
+                        &credential_values,
+                        &credential_public_key,
+                        &credential_private_key,
+                        rev_idx,
+                        max_cred_num,
+                        issuance_by_default,
+                        &mut rev_registry,
+                        &registry_private_key,
+                        &NoOpRevocationTailsAccessor::new()
+                    ).unwrap();
+
+                // 3.3 Calculate witness (this specific to revocation scheme)
+
+
+                // 3.4 Post process the credential
+                Prover::process_credential_signature_generic(
+                    &mut credential_signature,
+                    &credential_values,
+                    &credential_signature_correctness_proof,
+                    &credential_secrets_blinding_factors,
+                    &credential_public_key,
+                    &credential_nonce,
+                    Some(&registry_public_key),
+                    Some(&rev_registry),
+                    None
+                ).unwrap();
+
+                prover_data.push((rev_idx, credential_values, credential_signature, None));
+            }
+
+            // 5. Create proof presentation
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            let sub_proof_request = get_sub_proof_request();
+            let mut start = Instant::now();
+            let proofs = gen_proofs_generic(
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                &sub_proof_request,
+                &nonces,
+                &rev_registry,
+                &mut prover_data
+            );
+            total_prover_time += start.elapsed();
+
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request,
+                    &credential_schema,
+                    &non_credential_schema,
+                    &credential_public_key,
+                    Some(&registry_public_key),
+                    Some(&rev_registry)
+                ).unwrap();
+
+            let mut start = Instant::now();
+            for i in 0..proofs.len() {
+                verifier.verify_generic(&proofs[i], &nonces[i]).unwrap();
+            }
+            total_verifier_time += start.elapsed();
+
+            println!("Total Prover Time for {} presentations {:?}", num_signatures, total_prover_time);
+            println!("Total Verifier Time for {} presentations {:?}", num_signatures, total_verifier_time);
+        }
 
         #[test]
         /// registry_size = 100K, 1000K
-        fn bench_prover_update_signature_cks() {}
+        fn bench_prover_update_witness_cks() {
+            // Basic testing and benchmarking setup
+            let credential_schema = get_credential_schema();
+            let non_credential_schema = get_non_credential_schema();
+            let max_cred_num = 100000u32;
+            let issuance_by_default = true;
+            let max_batch_size = 10u32;
+            let num_signatures = 100u32;
+
+            let mut time_wit_update = Duration::from_secs(0);
+
+            // 1. Create credential definition
+            let (credential_public_key, credential_private_key,
+                credential_key_correctness_proof) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::CKS
+                ).unwrap();
+
+            // 2. Create Registry Definition
+            let (registry_public_key, registry_private_key, mut rev_registry, mut aux_params) =
+                Issuer::new_revocation_registry_generic(
+                    &credential_public_key,
+                    max_cred_num,
+                    issuance_by_default,
+                    max_batch_size,
+                ).unwrap();
+
+            let simple_tails_accessor = aux_params.unwrap_cks().unwrap();
+            let mut rev_reg_delta_init_cks = RevocationRegistryDelta::from_parts(
+                None,
+                rev_registry.unwrap_cks().unwrap(),
+                &HashSet::<u32>::from_iter((1..=max_cred_num).into_iter()),
+                &HashSet::<u32>::new()
+            );
+
+            // 3. Issue credentials
+            let mut prover_data: Vec<GenProverData> = Vec::new();
+            for rev_idx in 1..=num_signatures {
+                // 3.0 Holder chooses credential values
+                let credential_values = get_credential_values(&Prover::new_master_secret().unwrap());
+                let credential_blinding_nonce = new_nonce().unwrap();
+                // 3.1 Holder blinds secret values
+                let (
+                    blinded_credential_secrets,
+                    credential_secrets_blinding_factors,
+                    credential_blinding_correctness_proof
+                ) = Prover::blind_credential_secrets_generic(
+                    &credential_public_key,
+                    &credential_key_correctness_proof,
+                    &credential_values,
+                    &credential_blinding_nonce,
+                ).unwrap();
+
+                // 3.2 Holder requests a signature
+                let credential_nonce = new_nonce().unwrap();
+                let (mut credential_signature, credential_signature_correctness_proof, rev_reg_delta) =
+                    Issuer::sign_credential_with_revoc_generic(
+                        &rev_idx.to_string(),
+                        &blinded_credential_secrets,
+                        &credential_blinding_correctness_proof,
+                        &credential_blinding_nonce,
+                        &credential_nonce,
+                        &credential_values,
+                        &credential_public_key,
+                        &credential_private_key,
+                        rev_idx,
+                        max_cred_num,
+                        issuance_by_default,
+                        &mut rev_registry,
+                        &registry_private_key,
+                        &simple_tails_accessor
+                    ).unwrap();
+
+                // 3.3 Calculate witness (this specific to revocation scheme)
+                let mut witness = Witness::new(
+                    rev_idx,
+                    max_cred_num,
+                    false,
+                    &rev_reg_delta_init_cks,
+                    &simple_tails_accessor,
+                ).unwrap();
+                // wrap the witness into a generic witness
+                let mut witness = GenWitness::CKS(witness);
+
+                // 3.4 Post process the credential
+                Prover::process_credential_signature_generic(
+                    &mut credential_signature,
+                    &credential_values,
+                    &credential_signature_correctness_proof,
+                    &credential_secrets_blinding_factors,
+                    &credential_public_key,
+                    &credential_nonce,
+                    Some(&registry_public_key),
+                    Some(&rev_registry),
+                    Some(&witness)
+                ).unwrap();
+
+                prover_data.push((rev_idx, credential_values, credential_signature, Some(witness)));
+            }
+
+            // 5. Create proof presentation
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            let sub_proof_request = get_sub_proof_request();
+            let proofs = gen_proofs_generic(
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                &sub_proof_request,
+                &nonces,
+                &rev_registry,
+                &mut prover_data
+            );
+
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request,
+                    &credential_schema,
+                    &non_credential_schema,
+                    &credential_public_key,
+                    Some(&registry_public_key),
+                    Some(&rev_registry)
+                ).unwrap();
+
+            for i in 0..proofs.len() {
+                println!("Verification result for proof {} is {}", i,
+                         verifier.verify_generic(&proofs[i], &nonces[i]).unwrap());
+            }
+
+            // Now we revoke credentials 1..max_batch_size
+            let revoke_delta = Issuer::update_revocation_registry(
+                rev_registry.unwrap_cks().unwrap(), // gets &mut ref to underlying rev_reg_cks
+                max_cred_num,
+                BTreeSet::<u32>::new(),
+                BTreeSet::<u32>::from_iter((1..=max_batch_size).into_iter()),
+                &simple_tails_accessor
+            ).unwrap();
+
+            // Update the witnesses
+            let mut start = Instant::now();
+            for i in 0..prover_data.len() {
+                let rev_idx = prover_data[i].0;
+                prover_data[i].3.as_mut().unwrap().unwrap_cks().unwrap().update(
+                    rev_idx,
+                    max_cred_num,
+                    &revoke_delta,
+                    &simple_tails_accessor
+                ).unwrap();
+            }
+            time_wit_update += start.elapsed();
+
+            // Create and verify presentations again after revocation
+
+            // 5. Create proof presentation
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            let sub_proof_request = get_sub_proof_request();
+            let proofs = gen_proofs_generic(
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                &sub_proof_request,
+                &nonces,
+                &rev_registry,
+                &mut prover_data
+            );
+
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request,
+                    &credential_schema,
+                    &non_credential_schema,
+                    &credential_public_key,
+                    Some(&registry_public_key),
+                    Some(&rev_registry)
+                ).unwrap();
+
+            for i in 0..proofs.len() {
+                println!("Verification result for proof {} is {}", i,
+                         verifier.verify_generic(&proofs[i], &nonces[i]).unwrap());
+            }
+
+            println!("Time to update {} witnesses {:?}", num_signatures, time_wit_update);
+
+        }
+
 
         #[test]
-        /// registry_size = 100K
-        fn bench_prover_generate_proof_cks() {}
+        /// registry size = 100K
+        fn bench_prover_update_witness_va() {
+            // Basic testing and benchmarking setup
+            let credential_schema = get_credential_schema();
+            let non_credential_schema = get_non_credential_schema();
+            let max_cred_num = 100000u32;
+            let issuance_by_default = true;
+            let max_batch_size = 10u32;
+            let num_signatures = 100u32;
 
-        #[test]
-        /// registry_size = 100K
-        fn bench_prover_generate_proof_va() {}
+            let mut time_wit_update = Duration::from_secs(0);
 
-        #[test]
-        /// registry_size = 100K
-        fn bench_verifier_verify_proof_cks() {}
+            // 1. Create credential definition
+            let (credential_public_key, credential_private_key,
+                credential_key_correctness_proof) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::VA
+                ).unwrap();
 
-        #[test]
-        /// registry_size = 100K
-        fn bench_verifier_verify_proof_va() {}
+            // 2. Create Registry Definition
+            let (registry_public_key, registry_private_key, mut rev_registry, mut aux_params) =
+                Issuer::new_revocation_registry_generic(
+                    &credential_public_key,
+                    max_cred_num,
+                    issuance_by_default,
+                    max_batch_size,
+                ).unwrap();
 
+            let simple_tails_accessor = aux_params.unwrap_va().unwrap();
+            // Create registry object for Issuer
+            let mut va_registry = VARegistry::new(&rev_registry.unwrap_va().cloned().unwrap());
+
+            // 3. Issue credentials
+            let mut prover_data: Vec<GenProverData> = Vec::new();
+            for rev_idx in 1..=num_signatures {
+                // 3.0 Holder chooses credential values
+                let credential_values = get_credential_values(&Prover::new_master_secret().unwrap());
+                let credential_blinding_nonce = new_nonce().unwrap();
+                // 3.1 Holder blinds secret values
+                let (
+                    blinded_credential_secrets,
+                    credential_secrets_blinding_factors,
+                    credential_blinding_correctness_proof
+                ) = Prover::blind_credential_secrets_generic(
+                    &credential_public_key,
+                    &credential_key_correctness_proof,
+                    &credential_values,
+                    &credential_blinding_nonce,
+                ).unwrap();
+
+                // 3.2 Holder requests a signature
+                let credential_nonce = new_nonce().unwrap();
+                let (mut credential_signature, credential_signature_correctness_proof, rev_reg_delta) =
+                    Issuer::sign_credential_with_revoc_generic(
+                        &rev_idx.to_string(),
+                        &blinded_credential_secrets,
+                        &credential_blinding_correctness_proof,
+                        &credential_blinding_nonce,
+                        &credential_nonce,
+                        &credential_values,
+                        &credential_public_key,
+                        &credential_private_key,
+                        rev_idx,
+                        max_cred_num,
+                        issuance_by_default,
+                        &mut rev_registry,
+                        &registry_private_key,
+                        &simple_tails_accessor
+                    ).unwrap();
+
+
+
+                // 3.4 Post process the credential
+                Prover::process_credential_signature_generic(
+                    &mut credential_signature,
+                    &credential_values,
+                    &credential_signature_correctness_proof,
+                    &credential_secrets_blinding_factors,
+                    &credential_public_key,
+                    &credential_nonce,
+                    Some(&registry_public_key),
+                    Some(&rev_registry),
+                    None
+                ).unwrap();
+
+                prover_data.push((rev_idx, credential_values, credential_signature.try_clone().unwrap(), None));
+                /*
+                let check = verify_non_mem_witness(
+                    &credential_public_key.unwrap_va().unwrap().get_revocation_key().unwrap().unwrap(),
+                    registry_public_key.unwrap_va().unwrap(),
+                    &rev_registry.unwrap_va().unwrap().clone(),
+                    &credential_signature.unwrap_va().unwrap().r_credential.as_ref().unwrap().witness.clone(),
+                    rev_idx);
+                println!("Check: {}", check);
+
+                 */
+            }
+
+            // 5. Create proof presentation
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            let sub_proof_request = get_sub_proof_request();
+            let proofs = gen_proofs_generic(
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                &sub_proof_request,
+                &nonces,
+                &rev_registry,
+                &mut prover_data
+            );
+
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request,
+                    &credential_schema,
+                    &non_credential_schema,
+                    &credential_public_key,
+                    Some(&registry_public_key),
+                    Some(&rev_registry)
+                ).unwrap();
+
+            for i in 0..proofs.len() {
+                println!("Verification result for proof {} is {}", i,
+                         verifier.verify_generic(&proofs[i], &nonces[i]).unwrap());
+            }
+
+
+            // Now we revoke credentials 1..max_batch_size
+            let revoke_delta = va_registry.revoke(
+                &registry_private_key.unwrap_va().unwrap(),
+                &simple_tails_accessor.get_domain(),
+                &Vec::<u32>::from_iter((1..=max_batch_size).into_iter())
+            ).unwrap();
+
+            // Issuer updates the registry
+            rev_registry = GenRevocationRegistry::VA(RevocationRegistryVA::from_delta(&revoke_delta));
+
+            // Holders update the witness
+
+            for i in 0..prover_data.len() {
+                let rev_idx = prover_data[i].0;
+                let m2 = prover_data[i].2.unwrap_va().unwrap().r_credential.as_ref().unwrap().m2.clone();
+
+                let ldomain = LagrangianDomain::from_parts(
+                    simple_tails_accessor.get_domain(),
+                    &FieldElement::from(rev_idx)
+                ).unwrap();
+
+                let mut start = Instant::now();
+                prover_data[i].2.unwrap_va().unwrap().r_credential.as_mut().unwrap().witness.update(
+                    &revoke_delta,
+                    &ldomain
+                ).unwrap();
+                time_wit_update += start.elapsed();
+            }
+
+            // Create and verify presentations again after revocation
+
+            // 5. Create proof presentation
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            let sub_proof_request = get_sub_proof_request();
+            let proofs = gen_proofs_generic(
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                &sub_proof_request,
+                &nonces,
+                &rev_registry,
+                &mut prover_data
+            );
+
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request,
+                    &credential_schema,
+                    &non_credential_schema,
+                    &credential_public_key,
+                    Some(&registry_public_key),
+                    Some(&rev_registry)
+                ).unwrap();
+
+            for i in 0..proofs.len() {
+                println!("Verification result for proof {} is {}", i,
+                         verifier.verify_generic(&proofs[i], &nonces[i]).unwrap());
+            }
+
+            println!("Time to update {} witnesses {:?}", num_signatures, time_wit_update);
+        }
     }
-
 
 }

@@ -225,6 +225,19 @@ impl ProofVerifier {
                     credential.rev_key_pub.as_ref(),
                     credential.rev_reg.as_ref()
                 ) {
+                    // return false right here if pairing checks fail.
+                    let c_dash = non_revoc_proof_va.c_list.c_dash.clone();
+                    let c_bar = non_revoc_proof_va.c_list.c_bar.clone();
+                    let q_tilde = rev_pub_key_va.q_tilde.clone();
+                    let p_tilde = cred_public_key.r_key.as_ref().unwrap().p_tilde.clone();
+
+                    if amcl_wrapper::extension_field_gt::GT::ate_pairing(&c_dash, &q_tilde).ne(
+                        &GT::ate_pairing(&c_bar, &p_tilde)
+                    ) {
+                        println!("Witness is not correct");
+                        return Ok(false);
+                    }
+
                     tau_list.extend_from_slice(
                         &ProofVerifier::_verify_non_revocation_proof_va(
                             cred_public_key.r_key.as_ref().unwrap(),

@@ -1507,6 +1507,23 @@ impl GenCredentialPublicKey {
             GenCredentialPublicKey::VA(va_cred) => { Ok(GenCredentialPublicKey::VA(va_cred.try_clone()?)) }
         }
     }
+
+    pub fn unwrap_cks(&self) -> Option<&CredentialPublicKey> {
+        let mut cred_pub_key: Option<&CredentialPublicKey> = None;
+        if let GenCredentialPublicKey::CKS(ref cred_pub_key_internal) = self {
+           cred_pub_key  = Some(cred_pub_key_internal);
+        }
+        cred_pub_key
+    }
+
+    pub fn unwrap_va(&self) -> Option<&CredentialPublicKeyVA> {
+        let mut cred_pub_key: Option<&CredentialPublicKeyVA> = None;
+        if let GenCredentialPublicKey::VA(ref cred_pub_key_internal) = self {
+            cred_pub_key = Some(cred_pub_key_internal);
+        }
+        cred_pub_key
+    }
+
 }
 
 /// Credential Public Key for VA accumulator based credentials
@@ -1583,17 +1600,17 @@ pub enum GenRevocationRegistry {
 
 impl GenRevocationRegistry {
 
-    pub fn unwrap_cks(&self) -> Option<&RevocationRegistry> {
-        let mut reg_cks: Option<&RevocationRegistry> = None;
-        if let GenRevocationRegistry::CKS(ref reg_internal) = self {
+    pub fn unwrap_cks(&mut self) -> Option<&mut RevocationRegistry> {
+        let mut reg_cks: Option<&mut RevocationRegistry> = None;
+        if let GenRevocationRegistry::CKS(ref mut reg_internal) = self {
             reg_cks = Some(reg_internal);
         }
         reg_cks
     }
 
-    pub fn unwrap_va(&self) -> Option<&RevocationRegistryVA> {
-        let mut reg_va: Option<&RevocationRegistryVA> = None;
-        if let GenRevocationRegistry::VA(ref reg_internal) = self {
+    pub fn unwrap_va(&mut self) -> Option<&mut RevocationRegistryVA> {
+        let mut reg_va: Option<&mut RevocationRegistryVA> = None;
+        if let GenRevocationRegistry::VA(ref mut reg_internal) = self {
             reg_va = Some(reg_internal);
         }
         reg_va
@@ -1608,12 +1625,53 @@ pub enum GenRevocationKeyPublic {
     VA(RevocationKeyPublicVA)
 }
 
+impl GenRevocationKeyPublic {
+
+    pub fn unwrap_cks(&self) -> Option<&RevocationKeyPublic> {
+        let mut key: Option<&RevocationKeyPublic> = None;
+        if let GenRevocationKeyPublic::CKS(ref key_internal) = self {
+            key  = Some(key_internal);
+        }
+        key
+    }
+
+    pub fn unwrap_va(&self) -> Option<&RevocationKeyPublicVA> {
+        let mut key: Option<&RevocationKeyPublicVA> = None;
+        if let GenRevocationKeyPublic::VA(ref key_internal) = self {
+            key = Some(key_internal);
+        }
+        key
+    }
+
+}
+
+
 /// General RevocationPrivateKey
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug)]
 pub enum GenRevocationKeyPrivate {
     CKS(RevocationKeyPrivate),
     VA(RevocationKeyPrivateVA)
+}
+
+impl GenRevocationKeyPrivate {
+
+    pub fn unwrap_cks(&self) -> Option<&RevocationKeyPrivate> {
+        let mut key: Option<&RevocationKeyPrivate> = None;
+        if let GenRevocationKeyPrivate::CKS(ref key_internal) = self {
+            key  = Some(key_internal);
+        }
+        key
+    }
+
+    pub fn unwrap_va(&self) -> Option<&RevocationKeyPrivateVA> {
+        let mut key: Option<&RevocationKeyPrivateVA> = None;
+        if let GenRevocationKeyPrivate::VA(ref key_internal) = self {
+            key = Some(key_internal);
+        }
+        key
+    }
+
 }
 
 /// General RevocationAccessor
@@ -1651,12 +1709,20 @@ impl AuxiliaryParams {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct RevocationRegistryVA {
-    accum: G1
+    accum: G1,
+    revoked: HashSet<u32>
 }
 
 impl RevocationRegistryVA {
+    /// this function should be used to initialize the revocation registry
+    /// corresponding to initial accumulator value, with no revocations.
     pub fn from_delta(rev_reg_delta: &RevocationRegistryDeltaVA) -> RevocationRegistryVA {
-        RevocationRegistryVA { accum: rev_reg_delta.accum.clone() }
+        RevocationRegistryVA { accum: rev_reg_delta.accum.clone(), revoked: HashSet::new() }
+    }
+
+    /// translate from internal VARegistry object
+    pub fn from_internal_registry(internal_reg: &VARegistry) -> RevocationRegistryVA {
+        RevocationRegistryVA { accum: internal_reg.accum.clone(), revoked: internal_reg.revoked.clone()}
     }
 }
 
@@ -1678,7 +1744,7 @@ impl VARegistry {
     }
 
     pub fn revoke(&mut self,
-                  rev_pub_key:&CredentialRevocationPublicKeyVA,
+                  //rev_pub_key:&CredentialRevocationPublicKeyVA,
                   reg_priv_key:&RevocationKeyPrivateVA,
                   evaluation_domain: &FieldElementVector,
                   revoked:&Vec<u32>
@@ -1970,6 +2036,23 @@ impl GenCredentialSignature {
             GenCredentialSignature::VA(va_sig) => { Ok(GenCredentialSignature::VA(va_sig.try_clone()?)) }
         }
     }
+
+    pub fn unwrap_cks(&mut self) -> UrsaCryptoResult<&mut CredentialSignature> {
+        if let GenCredentialSignature::CKS(ref mut internal_sig) = self {
+            Ok(internal_sig)
+        } else {
+            Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Not a CKS signature"))
+        }
+    }
+
+    pub fn unwrap_va(&mut self) -> UrsaCryptoResult<&mut CredentialSignatureVA> {
+        if let GenCredentialSignature::VA(ref mut internal_sig) = self {
+            Ok(internal_sig)
+        } else {
+            Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Not a CKS signature"))
+        }
+    }
+
 }
 
 /// Generic Witness
@@ -1981,17 +2064,17 @@ pub enum GenWitness {
 }
 
 impl GenWitness {
-    pub fn unwrap_cks(&self) -> UrsaCryptoResult<Witness> {
+    pub fn unwrap_cks(&mut self) -> UrsaCryptoResult<&mut Witness> {
         if let GenWitness::CKS(witness_cks) = self {
-            Ok(witness_cks.clone())
+            Ok(witness_cks)
         } else {
             Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Not a CKS witness"))
         }
     }
 
-    pub fn unwrap_va(&self) -> UrsaCryptoResult<WitnessVA> {
+    pub fn unwrap_va(&mut self) -> UrsaCryptoResult<&mut WitnessVA> {
         if let GenWitness::VA(witness_va) = self {
-            Ok(witness_va.clone())
+            Ok(witness_va)
         } else {
             Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Not a VA witness"))
         }

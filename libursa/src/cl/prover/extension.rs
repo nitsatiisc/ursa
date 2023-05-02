@@ -1,3 +1,4 @@
+use cl::verifier::extension::verify_non_mem_witness;
 use super::*;
 
 impl Prover {
@@ -76,8 +77,9 @@ impl Prover {
                 nonce,
                 Some(rev_key_pub_cks),
                 Some(rev_reg_cks),
-                Some(&witness.unwrap().unwrap_cks().unwrap())
+                Some(&witness.unwrap().clone().unwrap_cks().unwrap().clone()) // Clone to allow usage of unwrap_cks()
             ).unwrap();
+
             *credential_signature = GenCredentialSignature::CKS(cred_sig_cks);
             return Ok(());
         }
@@ -504,6 +506,7 @@ impl ProofBuilder {
             &rev_reg,
             &credential_pub_key.r_key,
         ) {
+
             let proof =
                 ProofBuilder::_init_non_revocation_proof_va(r_cred, r_reg, r_pub_key)?;
 
@@ -560,7 +563,7 @@ impl ProofBuilder {
             u: FieldElement::random(),
             v: FieldElement::zero(),      // adjust later to u^-1
             t: FieldElement::random(),
-            d: FieldElement::from(r_cred.i),
+            d: FieldElement::from(r_cred.witness.d.clone()),
             d_dash: FieldElement::random(),     // adjust later to d+vt
             x: FieldElement::zero(),            // adjust later to -d
             beta: FieldElement::zero(),         // adjust later to x^-1
@@ -590,6 +593,7 @@ impl ProofBuilder {
         let c_v = (c_list_params.v.clone() * cred_rev_pub_key.x.clone()) + (c_list_params.r_v.clone()*cred_rev_pub_key.y.clone());
         let c_x = (c_list_params.x.clone() * cred_rev_pub_key.x.clone()) + (c_list_params.r_x.clone() * cred_rev_pub_key.y.clone());
         let c_d_dash = (c_list_params.d_dash.clone() * cred_rev_pub_key.x.clone()) + (c_list_params.r_dash.clone() * cred_rev_pub_key.y.clone());
+
 
         let mut c_list = NonRevocProofCListVA { c_dash, d_t, c_bar, c_v, c_x, c_d_dash };
 
