@@ -1,5 +1,5 @@
-## Overview of Changes
-### Schema and Registry Setup
+# Overview of Changes
+## Schema and Registry Setup
 ![](figures/setup.png)
 The issuer creates artefacts (public and private) for a given 
 schema definition and a revocation registry. The artefacts 
@@ -20,11 +20,161 @@ revocation registry. It is associated with specific schema artefacts.
 - `RevocationKeyPrivate`: This represents the private key for a given 
 revocation registry. It is associated with specific schema artefacts.
 
+The following functions are used by the issuer to create the above artefacts:
+
+<table>
+<tr>
+<td>
+
+```rust
+pub fn new_credential_def(
+        credential_schema: &CredentialSchema,
+        non_credential_schema: &NonCredentialSchema,
+        support_revocation: bool,
+    ) -> UrsaCryptoResult<(
+        CredentialPublicKey,
+        CredentialPrivateKey,
+        CredentialKeyCorrectnessProof,
+    )>
+```
+</td>
+
+<td>
+
+```rust
+pub fn new_revocation_registry_def(
+    credential_pub_key: &CredentialPublicKey,
+    max_cred_num: u32,
+    issuance_by_default: bool,
+) -> UrsaCryptoResult<(
+    RevocationKeyPublic,
+    RevocationKeyPrivate,
+    RevocationRegistry,
+    RevocationTailsGenerator,
+)>
+```
+</td>
+</tr>
+</table>
 
 
+### Changes to support new revocation
+We first define new types for the new revocation scheme to extend the setup functionality.
+```
+CredentialPublicKey <--> CredentialPublicKeyVA
+CredentialPrivateKey <--> CredentialPrivateKeyVA
+RevocationKeyPublic  <--> RevocationKeyPublicVA
+RevocationKeyPrivate <--> RevocationKeyPrivateVA
+RevocationRegistry   <--> RevocationRegistryVA
+SimpleTailsGenerator <--> NoOpRevocationTailsGenerator
+```
 
+Next, we introduce corresponding functions for the new revocation types:
+<table>
+<tr>
+<td>CKS</td>
+<td>  </td>
+<td>VA</td>
+</tr>
 
-### New Revocation Scheme
+<tr>
+<td>
+
+```rust
+ pub fn new_credential_def(
+        credential_schema: &CredentialSchema,
+        non_credential_schema: &NonCredentialSchema,
+        support_revocation: bool,
+    ) -> UrsaCryptoResult<(
+        CredentialPublicKey,
+        CredentialPrivateKey,
+        CredentialKeyCorrectnessProof,
+    )>
+```
+
+</td>
+
+<td> <---> </td>
+
+<td>
+
+```rust
+ pub fn new_credential_def_va(
+        credential_schema: &CredentialSchema,
+        non_credential_schema: &NonCredentialSchema,
+        support_revocation: bool
+    ) -> UrsaCryptoResult<(
+        CredentialPublicKeyVA,
+        CredentialPrivateKeyVA,
+        CredentialKeyCorrectnessProof
+    )>
+```
+
+</td>
+
+</tr>
+
+</table>
+
+Next we define generic (wrapper) types which wrap the specific types such as:
+```rust
+pub enum GenCredentialPublicKey {
+    CKS(CredentialPublicKey),
+    VA(CredentialPublicKeyVA)
+}
+
+pub enum GenCredentialPrivateKey {
+    CKS(CredentialPrivateKey),
+    VA(CredentialPrivateKeyVA)
+}
+```
+
+Finally, we define generic functions which delegate to the revocation specific functions by doing a match on 
+the argument type:
+
+```rust
+   pub fn new_revocation_registry_generic(
+        cred_pub_key: &GenCredentialPublicKey,
+        max_cred_num: u32,
+        issuance_by_default: bool,
+        max_batch_size: u32
+    ) -> UrsaCryptoResult<(
+        GenRevocationKeyPublic,
+        GenRevocationKeyPrivate,
+        GenRevocationRegistry,
+        AuxiliaryParams,
+    )> {
+
+        match cred_pub_key {
+            GenCredentialPublicKey::CKS(cred_pub_key_cks) => {
+                let (reg_key_public, reg_key_private, rev_reg, aux_params) =
+                    Issuer::new_revocation_registry_def(
+                        &cred_pub_key_cks,
+                        max_cred_num,
+                        issuance_by_default
+                    )?;
+                Ok((GenRevocationKeyPublic::CKS(reg_key_public),
+                    GenRevocationKeyPrivate::CKS(reg_key_private),
+                    GenRevocationRegistry::CKS(rev_reg),
+                    AuxiliaryParams::CKS(aux_params)))
+            },
+            GenCredentialPublicKey::VA(cred_pub_key_va) => {
+                let (reg_key_public, reg_key_private, rev_reg, aux_params) =
+                    Issuer::new_revocation_registry_def_va(
+                        &cred_pub_key_va,
+                        max_cred_num,
+                        max_batch_size
+                    )?;
+                Ok((GenRevocationKeyPublic::VA(reg_key_public),
+                    GenRevocationKeyPrivate::VA(reg_key_private),
+                    GenRevocationRegistry::VA(rev_reg),
+                    AuxiliaryParams::VA(aux_params)
+                ))
+            },
+            _ => Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Invalid Credential Public Key"))
+        }
+    }
+```
 
 
 ## Benchmarks
