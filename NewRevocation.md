@@ -460,6 +460,127 @@ pub struct GenVerifiableCredential {
 </tr>
 </table>
 
+The corresponding functions for proof generation and verification are introduced as follows:
+
+<table>
+<tr>
+<td> </td>
+<td> CKS (Existing) </td>
+<td> Generic (New) </td>
+</tr>
+
+<tr>
+<td>Init Proof</td>
+<td>
+
+```rust
+pub fn add_sub_proof_request(
+        &mut self,
+        sub_proof_request: &SubProofRequest,
+        credential_schema: &CredentialSchema,
+        non_credential_schema: &NonCredentialSchema,
+        credential_signature: &CredentialSignature,
+        credential_values: &CredentialValues,
+        credential_pub_key: &CredentialPublicKey,
+        rev_reg: Option<&RevocationRegistry>,
+        witness: Option<&Witness>,
+    ) -> UrsaCryptoResult<()>
+```
+</td>
+
+<td>
+
+```rust
+pub fn add_sub_proof_request_generic(
+        &mut self,
+        sub_proof_request: &SubProofRequest,
+        credential_schema: &CredentialSchema,
+        non_credential_schema: &NonCredentialSchema,
+        credential_signature: &GenCredentialSignature,
+        credential_values: &CredentialValues,
+        credential_pub_key: &GenCredentialPublicKey,
+        rev_reg: Option<&GenRevocationRegistry>,
+        witness: Option<&GenWitness>,
+    ) -> UrsaCryptoResult<()>
+```
+</td>
+</tr>
+
+<tr>
+<td>Finalize Proof</td>
+
+<td>
+
+```rust
+pub fn finalize(&self, nonce: &Nonce) 
+    -> UrsaCryptoResult<Proof>
+```
+</td>
+
+<td>
+
+```rust
+pub fn finalize_generic(&self, nonce: &Nonce) 
+    -> UrsaCryptoResult<GenProof>
+```
+</td>
+</tr>
+
+<tr>
+<td>Verifier Policy</td>
+
+<td>
+
+```rust 
+pub fn add_sub_proof_request(
+        &mut self,
+        sub_proof_request: &SubProofRequest,
+        credential_schema: &CredentialSchema,
+        non_credential_schema: &NonCredentialSchema,
+        credential_pub_key: &CredentialPublicKey,
+        rev_key_pub: Option<&RevocationKeyPublic>,
+        rev_reg: Option<&RevocationRegistry>,
+    ) -> UrsaCryptoResult<()> 
+```
+</td>
+
+<td>
+
+```rust
+pub fn add_sub_proof_request_generic(
+        &mut self,
+        sub_proof_request: &SubProofRequest,
+        credential_schema: &CredentialSchema,
+        non_credential_schema: &NonCredentialSchema,
+        credential_pub_key: &GenCredentialPublicKey,
+        rev_key_pub: Option<&GenRevocationKeyPublic>,
+        rev_reg: Option<&GenRevocationRegistry>,
+    ) -> UrsaCryptoResult<()>
+```
+</td>
+</tr>
+
+<tr>
+<td> Verify Proof </td>
+
+<td>
+
+```rust
+pub fn verify(&mut self, proof: &Proof, nonce: &Nonce) 
+    -> UrsaCryptoResult<bool> 
+```
+</td>
+
+<td>
+
+```rust
+pub fn verify_generic(&mut self, proof: &GenProof, nonce: &Nonce) 
+    -> UrsaCryptoResult<bool>
+```
+</td>
+</tr>
+</table>
+
 ## Benchmarks
 ### Issuer Operations 
 #### Registry Definition ( `max_cred_num=100,000`):
