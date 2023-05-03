@@ -230,7 +230,8 @@ The following function is introduced that allows creation of generic signatures 
  pub fn sign_credential_with_revoc<RTA>(
     prover_id: &str,
     blinded_credential_secrets: &BlindedCredentialSecrets,
-    blinded_credential_secrets_correctness_proof: &BlindedCredentialSecretsCorrectnessProof,
+    blinded_credential_secrets_correctness_proof: 
+        &BlindedCredentialSecretsCorrectnessProof,
     credential_nonce: &Nonce,
     credential_issuance_nonce: &Nonce,
     credential_values: &CredentialValues,
@@ -256,7 +257,8 @@ The following function is introduced that allows creation of generic signatures 
 pub fn sign_credential_with_revoc_generic<RTA>(
     prover_id: &str,
     blinded_credential_secrets: &BlindedCredentialSecrets,
-    blinded_credential_secrets_correctness_proof: &BlindedCredentialSecretsCorrectnessProof,
+    blinded_credential_secrets_correctness_proof: 
+        &BlindedCredentialSecretsCorrectnessProof,
     credential_nonce: &Nonce,
     credential_issuance_nonce: &Nonce,
     credential_values: &CredentialValues,
