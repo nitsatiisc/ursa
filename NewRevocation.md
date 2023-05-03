@@ -1,6 +1,6 @@
 # Overview of Changes
 ## Schema and Registry Setup
-<img src="figures/setup.png" height="300"/>
+<img src="figures/setup.png" height="400"/>
 
 The issuer creates artefacts (public and private) for a given 
 schema definition and a revocation registry. The artefacts 
@@ -178,7 +178,7 @@ the argument type:
 ```
 ## Credential Issuance 
 
-<img src="figures/sign.png" height="300"/>
+<img src="figures/sign.png" height="400"/>
 
 During credential issuance, the issuer creates an attestation object `CredentialSignature` which consists of attributes for 
 the holder according to the credential schema. In addition, when a credential with revocation support is requested, the 
@@ -223,6 +223,11 @@ As before, we introduce following new types and generic types:
 The following function is introduced that allows creation of generic signatures with either revocation scheme
 
 <table>
+<tr>
+<td>CKS (Existing)</td>
+<td>Genetic (New)</td>
+</tr>
+
 <tr>
 <td>
 
@@ -279,6 +284,57 @@ pub fn sign_credential_with_revoc_generic<RTA>(
 </td>
 </tr>
 </table>
+
+## Witness Management
+<img src="figures/witness.png" height="400"/>
+
+The holder needs to update its witness to the current state of the revocation registry. It does so by applying the 
+updates published by the issuer in the form of `RevocationRegistryDelta` to the witness. Alternatively, the holder
+can merge the `RevocationRegistryDelta` objects to cumulatively apply the update. The generic interface does not 
+cleanly handle the witness update related operations, as they are substantially different between the two revocation 
+schemes. 
+
+In the CKS scheme, the witness represented by the class `Witness` is not computed by the issuer, but instead 
+computed by the holder itself using the public parameters (specifically the tails). Subsequently, the witness 
+can be updated by applying the `RevocationRegistryDelta`.
+
+```rust
+// initialize witness
+ let mut witness = Witness::new(
+                    rev_idx,
+                    max_cred_num,
+                    issuance_by_default,
+                    &rev_reg_delta_init_cks,
+                    &simple_tails_accessor,
+                ).unwrap();
+
+// update CKS witness. We need to unwrap the generic type 
+// to specific CKS type, as update is specific to scheme.
+prover_data[i].3.as_mut().unwrap().unwrap_cks().unwrap().update(
+rev_idx,
+max_cred_num,
+&revoke_delta,
+&simple_tails_accessor
+).unwrap();
+```
+
+In the new (VA) accumulator scheme, no witness initialization is required, as it is computed (and can only be computed) 
+by the issuer. We embed the witness as part of the non-revocation credential itself. The witness update only requires 
+the corresponding registry delta `RevocationRegistryDeltaVA` and a helper vector of lagrangian coefficients to 
+help in applying the update.
+
+```rust
+// again we need to unwrap the generic type to specific type
+prover_data[i].2.unwrap_va().unwrap().r_credential.as_mut().unwrap().witness.update(
+                    &revoke_delta,
+                    &ldomain
+                ).unwrap();
+```
+In the above, the `GenCredentialSignature` type is downgraded to `CredentialSignatureVA` using `unwrap_va()` and 
+then the mutable reference to the contained revocation credential `r_credential` which contains the witness is 
+obtained. 
+
+## Proof Presentation
 
 
 ## Benchmarks

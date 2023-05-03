@@ -812,7 +812,7 @@ mod test_generic {
                 let mut witness = Witness::new(
                     rev_idx,
                     max_cred_num,
-                    false,
+                    issuance_by_default,
                     &rev_reg_delta_init_cks,
                     &simple_tails_accessor,
                 ).unwrap();
@@ -1930,7 +1930,7 @@ mod test_generic {
                 let mut witness = Witness::new(
                     rev_idx,
                     max_cred_num,
-                    false,
+                    issuance_by_default,
                     &rev_reg_delta_init_cks,
                     &simple_tails_accessor,
                 ).unwrap();
