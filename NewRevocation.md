@@ -180,6 +180,105 @@ the argument type:
 
 <img src="figures/sign.png" height="300"/>
 
+During credential issuance, the issuer creates an attestation object `CredentialSignature` which consists of attributes for 
+the holder according to the credential schema. In addition, when a credential with revocation support is requested, the 
+`CredentialSignature` object consists of:
+- `PrimaryCredentialSignature`: which denotes the primary CL signature over the attributes.
+- `NonRevocationCredentialSignature`: which denotes the non-revocation witness for the credential.
+
+Apart from creating the credential signature, the issuer also generates public artefacts (i) `RevocationRegistry` which 
+denotes the new state of registry (accumulator value) and (ii) `RevocationRegistryDelta` which is the information used by holders
+to update their witness to the new accumulator state. In Ursa, the following function completes a credential issuance with revocation:
+
+```rust
+ pub fn sign_credential_with_revoc<RTA>(
+        prover_id: &str,
+        blinded_credential_secrets: &BlindedCredentialSecrets,
+        blinded_credential_secrets_correctness_proof: &BlindedCredentialSecretsCorrectnessProof,
+        credential_nonce: &Nonce,
+        credential_issuance_nonce: &Nonce,
+        credential_values: &CredentialValues,
+        credential_pub_key: &CredentialPublicKey,
+        credential_priv_key: &CredentialPrivateKey,
+        rev_idx: u32,
+        max_cred_num: u32,
+        issuance_by_default: bool,
+        rev_reg: &mut RevocationRegistry,
+        rev_key_priv: &RevocationKeyPrivate,
+        rev_tails_accessor: &RTA,
+    ) -> UrsaCryptoResult<(
+        CredentialSignature,
+        SignatureCorrectnessProof,
+        Option<RevocationRegistryDelta>,
+    )>
+```
+### Supporting Changes
+As before, we introduce following new types and generic types:
+
+| CKS  (Existing)           | VA    (New)                 | Generic      (New)           |
+|---------------------------|-----------------------------|------------------------------|
+| `CredentialSignature`     | `CredentialSignatureVA`     | `GenCredentialSignature`     |
+| `RevocationRegistryDelta` | `RevocationRegistryDeltaVA` | `GenRevocationRegistryDelta` |
+
+The following function is introduced that allows creation of generic signatures with either revocation scheme
+
+<table>
+<tr>
+<td>
+
+```rust
+ pub fn sign_credential_with_revoc<RTA>(
+    prover_id: &str,
+    blinded_credential_secrets: &BlindedCredentialSecrets,
+    blinded_credential_secrets_correctness_proof: &BlindedCredentialSecretsCorrectnessProof,
+    credential_nonce: &Nonce,
+    credential_issuance_nonce: &Nonce,
+    credential_values: &CredentialValues,
+    credential_pub_key: &CredentialPublicKey,
+    credential_priv_key: &CredentialPrivateKey,
+    rev_idx: u32,
+    max_cred_num: u32,
+    issuance_by_default: bool,
+    rev_reg: &mut RevocationRegistry,
+    rev_key_priv: &RevocationKeyPrivate,
+    rev_tails_accessor: &RTA,
+) -> UrsaCryptoResult<(
+    CredentialSignature,
+    SignatureCorrectnessProof,
+    Option<RevocationRegistryDelta>,
+)>
+```
+</td>
+
+<td>
+
+```rust
+pub fn sign_credential_with_revoc_generic<RTA>(
+    prover_id: &str,
+    blinded_credential_secrets: &BlindedCredentialSecrets,
+    blinded_credential_secrets_correctness_proof: &BlindedCredentialSecretsCorrectnessProof,
+    credential_nonce: &Nonce,
+    credential_issuance_nonce: &Nonce,
+    credential_values: &CredentialValues,
+    credential_pub_key: &GenCredentialPublicKey,
+    credential_priv_key: &GenCredentialPrivateKey,
+    rev_idx: u32,
+    max_cred_num: u32,
+    issuance_by_default: bool,
+    rev_reg:&mut GenRevocationRegistry,
+    reg_priv_key: &GenRevocationKeyPrivate,
+    rev_tails_accessor: &RTA,
+) -> UrsaCryptoResult<(
+    GenCredentialSignature,
+    SignatureCorrectnessProof,
+    Option<GenRevocationRegistryDelta>
+)>
+```
+</td>
+</tr>
+</table>
+
+
 ## Benchmarks
 ### Issuer Operations 
 #### Registry Definition ( `max_cred_num=100,000`):
