@@ -1,6 +1,7 @@
 # Overview of Changes
 ## Schema and Registry Setup
-![](figures/setup.png)
+<img src="figures/setup.png" height="300"/>
+
 The issuer creates artefacts (public and private) for a given 
 schema definition and a revocation registry. The artefacts 
 for a schema definition apply to all revocation registries for 
@@ -175,7 +176,9 @@ the argument type:
         }
     }
 ```
+## Credential Issuance 
 
+<img src="figures/sign.png" height="300"/>
 
 ## Benchmarks
 ### Issuer Operations 
