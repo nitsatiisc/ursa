@@ -1,3 +1,29 @@
+## Overview of Changes
+### Schema and Registry Setup
+![](figures/setup.png)
+The issuer creates artefacts (public and private) for a given 
+schema definition and a revocation registry. The artefacts 
+for a schema definition apply to all revocation registries for 
+credentials issued for the schema. However, creation of a new 
+revocation registry requires artefacts specific to it. In URSA, 
+the relevant artefacts are:
+
+- `CredentialPublicKey`: This class represents public artefacts created for 
+a new schema definition. It consists of `CredentialPrimaryPublicKey` and 
+`CredentialRevocationPublicKey` which are public artefacts for the 
+primary signature scheme (CL) and revocation respectively.
+- `CredentialPrivateKey`: This class represents private artefacts used by
+the issuer. Again, they consist of `CredentialPrimaryPrivateKey` 
+and `CredentialRevoctionPrivateKey`.
+- `RevocationKeyPublic`: This represents the public key for a given 
+revocation registry. It is associated with specific schema artefacts.
+- `RevocationKeyPrivate`: This represents the private key for a given 
+revocation registry. It is associated with specific schema artefacts.
+
+
+
+
+
 ### New Revocation Scheme
 
 

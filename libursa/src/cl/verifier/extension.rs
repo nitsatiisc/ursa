@@ -403,7 +403,8 @@ impl ProofVerifier {
         proof: &NonRevocProofVA,
     ) -> UrsaCryptoResult<NonRevocProofTauListVA> {
 
-        let ch_num_z = FieldElement::from_bytes(&c_hash.to_bytes()?).unwrap();
+       // let ch_num_z = FieldElement::from_bytes(&c_hash.to_bytes()?).unwrap();
+       let ch_num_z = bignum_to_field_element(c_hash)?;
         /*
         let t_hat_expected_values =
             create_tau_list_expected_values(r_pub_key, rev_reg, rev_key_pub, &proof.c_list)?;

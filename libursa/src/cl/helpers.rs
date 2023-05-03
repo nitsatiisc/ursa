@@ -9,6 +9,9 @@ use std::collections::{HashMap, HashSet};
 
 #[cfg(test)]
 use std::cell::RefCell;
+use amcl::bn254::big::BIG;
+use cl::amcl_wrapper::types::BigNum;
+use cl::amcl_wrapper::constants::FieldElement_SIZE;
 
 #[derive(Debug, Copy, Clone)]
 #[allow(dead_code)] //FIXME
@@ -545,6 +548,22 @@ pub fn group_element_to_bignum(el: &GroupOrderElement) -> UrsaCryptoResult<BigNu
 pub fn bignum_to_group_element(num: &BigNumber) -> UrsaCryptoResult<GroupOrderElement> {
     GroupOrderElement::from_bytes(&num.to_bytes()?)
 }
+
+pub fn bignum_to_field_element(num: &BigNumber) -> UrsaCryptoResult<FieldElement> {
+    let b = &num.to_bytes()?;
+    let mut vec = b.to_vec();
+    let len = vec.len();
+    if len < FieldElement_SIZE {
+        let diff = FieldElement_SIZE - len;
+        let mut result = vec![0; diff];
+        result.append(&mut vec);
+        return Ok(FieldElement::from(BigNum::frombytes(&result)));
+    }
+    Ok(FieldElement::from(BigNum::frombytes(b)))
+
+
+}
+
 
 pub fn create_tau_list_expected_values(
     r_pub_key: &CredentialRevocationPublicKey,

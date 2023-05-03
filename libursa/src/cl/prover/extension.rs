@@ -649,7 +649,10 @@ impl ProofBuilder {
             c_h
         );
 
-        let ch_num_z = FieldElement::from_bytes(&c_h.to_bytes()?).unwrap();
+        //@todo: Check if the challenge has fewer bytes than FieldElement_SIZE
+        //let ch_num_z = FieldElement::from_bytes(&c_h.to_bytes()?).unwrap();
+        let ch_num_z = bignum_to_field_element(c_h).unwrap();
+
         let mut x_list: Vec<FieldElement> = Vec::new();
 
         let u_hat = init_proof.tau_list_params.u.clone() + ch_num_z.clone() * init_proof.c_list_params.u.clone();

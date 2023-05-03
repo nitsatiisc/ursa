@@ -1072,7 +1072,7 @@ mod test_generic {
 
             for i in 0..prover_data.len() {
                 let rev_idx = prover_data[i].0;
-                let m2 = prover_data[i].2.unwrap_va().unwrap().r_credential.as_ref().unwrap().m2.clone();
+                //let m2 = prover_data[i].2.unwrap_va().unwrap().r_credential.as_ref().unwrap().m2.clone();
 
                 let ldomain = LagrangianDomain::from_parts(
                     simple_tails_accessor.get_domain(),
@@ -1119,10 +1119,6 @@ mod test_generic {
                 println!("Verification result for proof {} is {}", i,
                          verifier.verify_generic(&proofs[i], &nonces[i]).unwrap());
             }
-
-
-
-
         }
 
         #[test]
