@@ -335,7 +335,130 @@ then the mutable reference to the contained revocation credential `r_credential`
 obtained. 
 
 ## Proof Presentation
+<img height="400" src="figures/proof.png"/>
 
+The proof presentation involves prover showing possession of credential with attributes satisfying the verifier's policy.
+The verifier's policy specifies schema, attributes to be disclosed, predicates and the revocation registry (to check 
+the non-revocation status of the used credential). In Ursa, this is accomplished by the following function(s):
+
+```rust
+pub fn add_sub_proof_request(
+        &mut self,
+        sub_proof_request: &SubProofRequest,
+        credential_schema: &CredentialSchema,
+        non_credential_schema: &NonCredentialSchema,
+        credential_signature: &CredentialSignature,
+        credential_values: &CredentialValues,
+        credential_pub_key: &CredentialPublicKey,
+        rev_reg: Option<&RevocationRegistry>,
+        witness: Option<&Witness>,
+    ) -> UrsaCryptoResult<()>
+
+pub fn finalize(&self, nonce: &Nonce) -> UrsaCryptoResult<Proof>
+```
+### Supporting Changes
+We introduce following new and generic types to support the new revocation scheme:
+
+| CKS (Existing)         | VA (New)          | Generic (New)             |
+|------------------------|-------------------|---------------------------|
+| `NonRevokProof`        | `NonRevokProofVA` | `GenNonRevokProof`        |
+| `SubProof`             | -                 | `GenSubProof`             |
+| `Proof`                | -                 | `GenProof`                |
+| `VerifiableCredential` | -                 | `GenVerifiableCredential` |
+
+The propagation of the changes can be seen as:
+
+<table>
+
+<tr>
+<td> </td>
+<td> Existing </td>
+<td> Generic  </td>
+</tr>
+
+<tr>
+<td>SubProof</td>
+<td>
+
+```rust
+pub struct SubProof {
+    primary_proof: PrimaryProof,
+    non_revoc_proof: Option<NonRevocProof>,
+}
+```
+</td>
+
+<td>
+
+```rust
+
+pub struct GenSubProof {
+    pub primary_proof: PrimaryProof,
+    pub non_revoc_proof: Option<GenNonRevocProof>,
+}
+```
+</td>
+</tr>
+
+<tr>
+<td>Proof</td>
+
+<td>
+
+```rust
+pub struct Proof {
+    pub proofs: Vec<SubProof>,
+    pub aggregated_proof: AggregatedProof,
+}
+```
+</td>
+
+
+<td>
+
+```rust
+pub struct GenProof {
+    pub proofs: Vec<GenSubProof>,
+    pub aggregated_proof: AggregatedProof,
+}
+```
+</td>
+</tr>
+
+<tr>
+
+<td>VerifiableCredential</td>
+
+<td>
+
+```rust
+pub struct VerifiableCredential {
+    pub_key: CredentialPublicKey,
+    sub_proof_request: SubProofRequest,
+    credential_schema: CredentialSchema,
+    non_credential_schema: NonCredentialSchema,
+    rev_key_pub: Option<RevocationKeyPublic>,
+    rev_reg: Option<RevocationRegistry>,
+}
+```
+</td>
+
+<td>
+
+```rust
+pub struct GenVerifiableCredential {
+    pub_key: GenCredentialPublicKey,
+    sub_proof_request: SubProofRequest,
+    credential_schema: CredentialSchema,
+    non_credential_schema: NonCredentialSchema,
+    rev_key_pub: Option<GenRevocationKeyPublic>,
+    rev_reg: Option<GenRevocationRegistry>,
+}
+```
+</td>
+
+</tr>
+</table>
 
 ## Benchmarks
 ### Issuer Operations 
