@@ -473,6 +473,7 @@ mod test_generic {
             assert!(simple_tails_accessor.is_some());
         }
 
+        #[test]
         fn test_generic_proof_cks()
         {
             // Basic testing and benchmarking setup
