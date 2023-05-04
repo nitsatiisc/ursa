@@ -1256,8 +1256,8 @@ mod test_generic {
                 &mut prover_data);
 
             /*
-         *  Serialize the objects needed for verification
-         */
+             *  Serialize the objects needed for verification
+             */
 
             let sub_proof_request_str = serde_json::to_string::<SubProofRequest>(&sub_proof_request).unwrap();
             let credential_schema_str = serde_json::to_string::<CredentialSchema>(&credential_schema).unwrap();
