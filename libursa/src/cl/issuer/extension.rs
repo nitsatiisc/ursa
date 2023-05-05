@@ -215,7 +215,6 @@ impl Issuer {
     }
 
 
-
     pub fn sign_credential_with_revoc_va(
         prover_id: &str,
         blinded_credential_secrets: &BlindedCredentialSecrets,
@@ -262,12 +261,13 @@ impl Issuer {
         )?;
 
 
+        let va_registry = VARegistry::new(&rev_reg);
 
         let r_cred = Issuer::_new_non_revocation_credential_va(
             rev_idx,
             &credential_pub_key.r_key.clone().unwrap(),
             &rev_key_priv,
-            &VARegistry::new(&rev_reg)
+            &va_registry
         );
 
 
@@ -286,6 +286,7 @@ impl Issuer {
 
         trace!("Issuer::sign_credential: <<< cred_signature: {:?}, signature_correctness_proof: {:?}",
                secret!(&cred_signature), signature_correctness_proof);
+
 
         Ok((cred_signature, signature_correctness_proof, None))
     }
@@ -450,35 +451,57 @@ impl Issuer {
         va_registry: &VARegistry,
     ) -> UrsaCryptoResult<NonRevocationCredentialSignatureVA> {
 
-        // if va_registry.revoked.contains(&rev_idx) {
-        //     err_msg(UrsaCryptoErrorKind::CredentialRevoked, "Credential Revoked");
-        // }
+        if va_registry.revoked.contains(&rev_idx) {
+            return Err(err_msg(UrsaCryptoErrorKind::CredentialRevoked, "Credential Revoked"));
+        }
+
         let cred_context = FieldElement::from(rev_idx);
 
         let mut d = FieldElement::one();
-        //let mut c = PointG1::new_inf()?;
-        //let mut revoked = reg_priv_key.v0.clone();
+
         for idx in va_registry.revoked.iter() {
             let y = FieldElement::from(idx.clone());
             d = d.clone() * (y - cred_context.clone());
-            //revoked.push(y);
         }
 
         for elem in reg_priv_key.v0.iter() {
-            d = d.clone() * (elem - cred_context.clone()); // d.mul_mod(&elem.sub_mod(&cred_context)?)?;
+            d = d.clone() * (elem - cred_context.clone());
         }
 
         let inv = (reg_priv_key.alpha.clone() + cred_context.clone()).inverse();
         let d_dash = d.clone() * inv.clone();
 
-        //let d_dash = d.mul_mod(&cred_context.add_mod(&reg_priv_key.alpha)?.inverse()?)?;
-        let c = (inv.clone() * va_registry.accum.clone()) - (d_dash * rev_pub_key.p.clone()); // (&rev_pub_key.p.mul(&d_dash)?)?;
+        let c = (inv.clone() * va_registry.accum.clone()) - (d_dash * rev_pub_key.p.clone());
 
         Ok(NonRevocationCredentialSignatureVA {
             witness: WitnessVA {accum: va_registry.accum.clone(), d:d.clone(), C:c.clone()},
             i: rev_idx,
             m2: cred_context.clone() })
 
+    }
+
+
+    pub fn update_revocation_registry_va(
+        rev_reg: &mut RevocationRegistryVA,
+        reg_priv_key: &RevocationKeyPrivateVA,
+        evaluation_domain: &FieldElementVector,
+        revoked: BTreeSet<u32>,
+    ) -> UrsaCryptoResult<RevocationRegistryDeltaVA>
+    {
+
+        let mut va_registry = VARegistry::new(rev_reg);
+        let revoke_delta = va_registry.revoke(
+            reg_priv_key,
+            &evaluation_domain,
+            &Vec::<u32>::from_iter(revoked.into_iter()),
+        );
+
+        if revoke_delta.is_ok() {
+            rev_reg.accum = va_registry.accum.clone();
+            rev_reg.revoked = va_registry.revoked.clone();
+        }
+
+        revoke_delta
     }
 
 

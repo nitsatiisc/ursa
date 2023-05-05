@@ -1739,8 +1739,9 @@ impl VARegistry {
         rev_reg: &RevocationRegistryVA
     ) -> VARegistry {
         let accum = rev_reg.accum.clone();
+        let revoked = rev_reg.revoked.clone();
         // update accum according to contents of private key
-        VARegistry {accum, revoked: HashSet::new()}
+        VARegistry { accum, revoked }
     }
 
     pub fn revoke(&mut self,

@@ -956,8 +956,6 @@ mod test_generic {
                 ).unwrap();
 
             let simple_tails_accessor = aux_params.unwrap_va().unwrap();
-            // Create registry object for Issuer
-            let mut va_registry = VARegistry::new(&rev_registry.unwrap_va().cloned().unwrap());
 
             // 3. Issue credentials
             let mut prover_data: Vec<GenProverData> = Vec::new();
@@ -1013,16 +1011,7 @@ mod test_generic {
                 ).unwrap();
 
                 prover_data.push((rev_idx, credential_values, credential_signature.try_clone().unwrap(), None));
-                /*
-                let check = verify_non_mem_witness(
-                    &credential_public_key.unwrap_va().unwrap().get_revocation_key().unwrap().unwrap(),
-                    registry_public_key.unwrap_va().unwrap(),
-                    &rev_registry.unwrap_va().unwrap().clone(),
-                    &credential_signature.unwrap_va().unwrap().r_credential.as_ref().unwrap().witness.clone(),
-                    rev_idx);
-                println!("Check: {}", check);
 
-                 */
             }
 
             // 5. Create proof presentation
@@ -1060,17 +1049,14 @@ mod test_generic {
 
 
             // Now we revoke credentials 1..max_batch_size
-            let revoke_delta = va_registry.revoke(
-                &registry_private_key.unwrap_va().unwrap(),
-                &simple_tails_accessor.get_domain(),
-                &Vec::<u32>::from_iter((1..=max_batch_size).into_iter())
+            let revoke_delta = Issuer::update_revocation_registry_va(
+                rev_registry.unwrap_va().unwrap(),
+                registry_private_key.unwrap_va().unwrap(),
+                 &simple_tails_accessor.get_domain(),
+                 BTreeSet::<u32>::from_iter((1..=max_batch_size).into_iter())
             ).unwrap();
 
-            // Issuer updates the registry
-            rev_registry = GenRevocationRegistry::VA(RevocationRegistryVA::from_delta(&revoke_delta));
-
             // Holders update the witness
-
             for i in 0..prover_data.len() {
                 let rev_idx = prover_data[i].0;
                 //let m2 = prover_data[i].2.unwrap_va().unwrap().r_credential.as_ref().unwrap().m2.clone();
@@ -2420,16 +2406,7 @@ mod test_generic {
                 ).unwrap();
 
                 prover_data.push((rev_idx, credential_values, credential_signature.try_clone().unwrap(), None));
-                /*
-                let check = verify_non_mem_witness(
-                    &credential_public_key.unwrap_va().unwrap().get_revocation_key().unwrap().unwrap(),
-                    registry_public_key.unwrap_va().unwrap(),
-                    &rev_registry.unwrap_va().unwrap().clone(),
-                    &credential_signature.unwrap_va().unwrap().r_credential.as_ref().unwrap().witness.clone(),
-                    rev_idx);
-                println!("Check: {}", check);
 
-                 */
             }
 
             // 5. Create proof presentation
