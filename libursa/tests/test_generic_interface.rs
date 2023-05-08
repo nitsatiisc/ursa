@@ -1059,8 +1059,6 @@ mod test_generic {
             // Holders update the witness
             for i in 0..prover_data.len() {
                 let rev_idx = prover_data[i].0;
-                //let m2 = prover_data[i].2.unwrap_va().unwrap().r_credential.as_ref().unwrap().m2.clone();
-
                 let ldomain = LagrangianDomain::from_parts(
                     simple_tails_accessor.get_domain(),
                     &FieldElement::from(rev_idx)
@@ -2509,6 +2507,492 @@ mod test_generic {
 
             println!("Time to update {} witnesses {:?}", num_signatures, time_wit_update);
         }
+    }
+
+    #[cfg(test)]
+    mod tutorial {
+        use std::iter::FromIterator;
+        use test_generic::{get_credential_schema, get_non_credential_schema};
+        use ursa::cl::prover::mocks::blinded_credential_secrets_correctness_proof;
+        use super::*;
+
+        #[test]
+        fn complete_flow_cks_revocation()
+        {
+            // This function gives a tutorial introduction to the major interfaces of the
+            // cl module, using the generic interface. Broadly, we will do the following
+            //  1. Issuer generate(s) schema artefacts
+            //  2. Issuer generate(s) revocation registry with CKS revocation type
+            //  3. Holder(s) request for signatures from the issuer.
+            //  4. Holder(s) generate presentations using obtained signatures
+            //  5. Verifier verifies the proof presentations.
+            //  6. Issuer revokes a subset of credentials and publishes registry update
+            //  7. Holders update their witnesses.
+            //  8. Holders generate proofs with updated witnesses.
+            //  9. Verifier verifies proofs against updated registry.
+
+
+            // ******************* 1. Generate Schema Artefacts ***********************************
+            let credential_schema = get_credential_schema();
+            // above returns a schema object with the following attributes
+            // {"name": BigNumber, "age": BigNumber, "sex": BigNumber, "height": BigNumber }
+            // all the above attributes are known to the issuer.
+            let non_credential_schema = get_non_credential_schema();
+            // above returns a scheme object with
+            // {"master_secret": BigNumber }
+
+            // finally we call the interface to output the artefacts for the schema defined by
+            // credential and non-credential schemas.
+            // Create credential definition
+            let (credential_public_key, credential_private_key,
+                credential_key_correctness_proof) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::CKS
+                ).unwrap();
+            // The last argument to the above call specifies the revocation scheme to use.
+            // The function returns public and private Issuer keys for the schema. The public key
+            // is used by verifiers to verify correctness of presentations for the issuer's credentials.
+
+            // *********************** 2. Generate Registry Artefacts ******************************
+
+            // We first define certain parameters associated with registry
+            let max_cred_num: u32 = 1000;               // maximum number of credentials supported by registry
+            let max_batch_size: u32 = 10;               // maximum size of update
+            let issuance_by_default: bool = true;       // are credentials "accumulated" by default.
+
+            // Create Registry Definition
+            let (registry_public_key, registry_private_key, mut rev_registry, mut aux_params) =
+                Issuer::new_revocation_registry_generic(
+                    &credential_public_key,
+                    max_cred_num,
+                    issuance_by_default,
+                    max_batch_size,
+                ).unwrap();
+            // The above function outputs public and private keys for the revocation registry. The
+            // third output rev_registry contains the initial state (accumulator), while the final
+            // value aux_params allows generating some (public) auxiliary information specific to the
+            // revocation scheme, which allows efficient subsequent operations.
+            // For the CKS scheme considered in this example, final returned value allows us to generate
+            // the tails vector. We note the use of unwrap_cks() to "downgrade" the generic type to
+            // a CKS specific type.
+            let mut simple_tails_accessor = aux_params.unwrap_cks().expect("Unable to generate tails vector");
+            let mut rev_reg_delta_cks = RevocationRegistryDelta::from_parts(
+                None,
+                &rev_registry.unwrap_cks().unwrap(),
+                &HashSet::<u32>::from_iter((1..=max_cred_num).into_iter()),
+                &HashSet::<u32>::new(),
+            );
+
+
+            // 3. ********************** Issue Credentials *****************************************
+            let num_signatures: u32 = 100;
+            let mut prover_data : Vec<GenProverData> = Vec::new();
+            // we issue number of credentials (num_signatures), and store information about each credential
+            // in the vector prover_data. This information will be used to create presentations.
+            for rev_idx in 1..=num_signatures {
+                // 3.1 As a first step, the holder chooses the values for the credential.
+                let credential_values = get_credential_values(&Prover::new_master_secret().unwrap());
+                // 3.2 Next, the prover blinds the hidden values. It also needs to show proof of knowledge of hidden values, for
+                // which it uses a nonce sent by the issuer.
+                let credential_secrets_nonce = new_nonce().unwrap();
+                let (blinded_credential_secrets, credential_secrets_blinding_factors,
+                    blinded_credential_secrets_correctness_proof) =
+                    Prover::blind_credential_secrets_generic(
+                        &credential_public_key,
+                        &credential_key_correctness_proof,
+                        &credential_values,
+                        &credential_secrets_nonce,
+                    ).unwrap();
+
+                // 3.3 Now the holder supplies credential values to the issuer, where
+                // the known values are supplied in plain-text, while hidden values are
+                // supplied in form of blinded_credential_secrets. The holder also generates
+                // a nonce which is used by the issuer to prove correctness of issued signature.
+                let credential_correctness_nonce = new_nonce().unwrap();
+                let (mut credential_signature, credential_signature_correctness_proof, rev_reg_delta) =
+                    Issuer::sign_credential_with_revoc_generic(
+                        &rev_idx.to_string(),
+                        &blinded_credential_secrets,
+                        &blinded_credential_secrets_correctness_proof,
+                        &credential_secrets_nonce,
+                        &credential_correctness_nonce,
+                        &credential_values,
+                        &credential_public_key,
+                        &credential_private_key,
+                        rev_idx,
+                        max_cred_num,
+                        issuance_by_default,
+                        &mut rev_registry,
+                        &registry_private_key,
+                        &simple_tails_accessor,
+                    ).expect("Error issuing the signature");
+
+                // 3.4 Holder initializes the witness
+                // In the CKS scheme, the holder has to compute the witness corresponding to
+                // the issued non-revocation signature, using the tails. This is a major difference
+                // from the VA scheme, where the issuer provides initialized witness as part of
+                // the non-revocation signature.
+                let mut witness = Witness::new(
+                    rev_idx,
+                    max_cred_num,
+                    issuance_by_default,
+                    &rev_reg_delta_cks,
+                    &simple_tails_accessor,
+                ).unwrap();
+
+                // upgrade witness back to generic type
+                let mut witness = GenWitness::CKS(witness);
+
+
+                // 3.5 Holder post-processes the signature (technically a pre-signature).
+                Prover::process_credential_signature_generic(
+                    &mut credential_signature,
+                    &credential_values,
+                    &credential_signature_correctness_proof,
+                    &credential_secrets_blinding_factors,
+                    &credential_public_key,
+                    &credential_correctness_nonce,
+                    Some(&registry_public_key),
+                    Some(&rev_registry),
+                    Some(&witness),
+                ).expect("Error while post-processing signature");
+
+                prover_data.push((rev_idx, credential_values.try_clone().unwrap(),
+                                  credential_signature.try_clone().unwrap(), Some(witness)));
+            }
+
+            // ******************** 5. Proof Presentation ******************************************
+            // First the verifier generates a nonce for each proof
+            // 5. Create proof presentation
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            let sub_proof_request = get_sub_proof_request();
+            let proofs = gen_proofs_generic(
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                &sub_proof_request,
+                &nonces,
+                &rev_registry,
+                &mut prover_data
+            );
+
+            // ******************** Proof Verification ********************************************
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request,
+                    &credential_schema,
+                    &non_credential_schema,
+                    &credential_public_key,
+                    Some(&registry_public_key),
+                    Some(&rev_registry)
+                ).unwrap();
+
+            for i in 0..proofs.len() {
+                println!("Verification result for proof {} is {}", i,
+                         verifier.verify_generic(&proofs[i], &nonces[i]).unwrap());
+            }
+
+            // 7. ********************** Revoke Credential ****************************************
+            // Now we revoke credentials 1..max_batch_size
+            let revoke_delta = Issuer::update_revocation_registry(
+                rev_registry.unwrap_cks().unwrap(), // gets &mut ref to underlying rev_reg_cks
+                max_cred_num,
+                BTreeSet::<u32>::new(),
+                BTreeSet::<u32>::from_iter((1..=max_batch_size).into_iter()),
+                &simple_tails_accessor
+            ).unwrap();
+
+            // 8. ************************** Update Witnesses *************************************
+            let mut start = Instant::now();
+            for i in 0..prover_data.len() {
+                let rev_idx = prover_data[i].0;
+                // prover_data[i].3 gives Option<&GenWitness>, as_mut() gives &mut GenWitness,
+                // unwrap_cks() gives Result<&mut Witness>, and unwrap() gives &mut Witness.
+                prover_data[i].3.as_mut().unwrap().unwrap_cks().unwrap().update(
+                    rev_idx,
+                    max_cred_num,
+                    &revoke_delta,
+                    &simple_tails_accessor
+                ).unwrap();
+            }
+
+            // 9. ************************ Prove and Verify Presentations Again *******************
+
+            // Create proof presentation
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            let sub_proof_request = get_sub_proof_request();
+            let proofs = gen_proofs_generic(
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                &sub_proof_request,
+                &nonces,
+                &rev_registry,
+                &mut prover_data
+            );
+
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request,
+                    &credential_schema,
+                    &non_credential_schema,
+                    &credential_public_key,
+                    Some(&registry_public_key),
+                    Some(&rev_registry)
+                ).unwrap();
+
+            for i in 0..proofs.len() {
+                println!("Verification result for proof {} is {}", i,
+                         verifier.verify_generic(&proofs[i], &nonces[i]).unwrap());
+            }
+
+        }
+
+        #[test]
+        fn complete_workflow_va_revocation()
+        {
+            // This function gives a tutorial introduction to the major interfaces of the
+            // cl module, using the generic interface. Broadly, we will do the following
+            //  1. Issuer generate(s) schema artefacts
+            //  2. Issuer generate(s) revocation registry with CKS revocation type
+            //  3. Holder(s) request for signatures from the issuer.
+            //  4. Holder(s) generate presentations using obtained signatures
+            //  5. Verifier verifies the proof presentations.
+            //  6. Issuer revokes a subset of credentials and publishes registry update
+            //  7. Holders update their witnesses.
+            //  8. Holders generate proofs with updated witnesses.
+            //  9. Verifier verifies proofs against updated registry.
+
+
+            // ******************* 1. Generate Schema Artefacts ***********************************
+            let credential_schema = get_credential_schema();
+            // above returns a schema object with the following attributes
+            // {"name": BigNumber, "age": BigNumber, "sex": BigNumber, "height": BigNumber }
+            // all the above attributes are known to the issuer.
+            let non_credential_schema = get_non_credential_schema();
+            // above returns a scheme object with
+            // {"master_secret": BigNumber }
+
+            // finally we call the interface to output the artefacts for the schema defined by
+            // credential and non-credential schemas.
+            // Create credential definition
+            let (credential_public_key, credential_private_key,
+                credential_key_correctness_proof) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::VA
+                ).unwrap();
+            // The last argument to the above call specifies the revocation scheme to use.
+            // The function returns public and private Issuer keys for the schema. The public key
+            // is used by verifiers to verify correctness of presentations for the issuer's credentials.
+
+            // *********************** 2. Generate Registry Artefacts ******************************
+
+            // We first define certain parameters associated with registry
+            let max_cred_num: u32 = 1000;               // maximum number of credentials supported by registry
+            let max_batch_size: u32 = 10;               // maximum size of update
+            let issuance_by_default: bool = true;       // are credentials "accumulated" by default.
+
+            // Create Registry Definition
+            let (registry_public_key, registry_private_key, mut rev_registry, mut aux_params) =
+                Issuer::new_revocation_registry_generic(
+                    &credential_public_key,
+                    max_cred_num,
+                    issuance_by_default,
+                    max_batch_size,
+                ).unwrap();
+            // The above function outputs public and private keys for the revocation registry. The
+            // third output rev_registry contains the initial state (accumulator), while the final
+            // value aux_params allows generating some (public) auxiliary information specific to the
+            // revocation scheme, which allows efficient subsequent operations.
+            // For the VA scheme considered in this example, final returned value corresponds to
+            // interpolation domain for update polynomials. This allows efficient polynomial arithmetic.
+            // We use of unwrap_va() to "downgrade" the generic type AuxParams to
+            // a VA specific type NoOpRevTailsGenerator to confirm to the trait RevTailsGenerator
+            let mut aux_info_va = aux_params.unwrap_va().expect("Unable to generate tails vector");
+
+
+            // 3. ********************** Issue Credentials *****************************************
+            let num_signatures: u32 = 100;
+            let mut prover_data : Vec<GenProverData> = Vec::new();
+            // we issue number of credentials (num_signatures), and store information about each credential
+            // in the vector prover_data. This information will be used to create presentations.
+            for rev_idx in 1..=num_signatures {
+                // 3.1 As a first step, the holder chooses the values for the credential.
+                let credential_values = get_credential_values(&Prover::new_master_secret().unwrap());
+                // 3.2 Next, the prover blinds the hidden values. It also needs to show proof of knowledge of hidden values, for
+                // which it uses a nonce sent by the issuer.
+                let credential_secrets_nonce = new_nonce().unwrap();
+                let (blinded_credential_secrets, credential_secrets_blinding_factors,
+                    blinded_credential_secrets_correctness_proof) =
+                    Prover::blind_credential_secrets_generic(
+                        &credential_public_key,
+                        &credential_key_correctness_proof,
+                        &credential_values,
+                        &credential_secrets_nonce,
+                    ).unwrap();
+
+                // 3.3 Now the holder supplies credential values to the issuer, where
+                // the known values are supplied in plain-text, while hidden values are
+                // supplied in form of blinded_credential_secrets. The holder also generates
+                // a nonce which is used by the issuer to prove correctness of issued signature.
+                let credential_correctness_nonce = new_nonce().unwrap();
+                let (mut credential_signature, credential_signature_correctness_proof, rev_reg_delta) =
+                    Issuer::sign_credential_with_revoc_generic(
+                        &rev_idx.to_string(),
+                        &blinded_credential_secrets,
+                        &blinded_credential_secrets_correctness_proof,
+                        &credential_secrets_nonce,
+                        &credential_correctness_nonce,
+                        &credential_values,
+                        &credential_public_key,
+                        &credential_private_key,
+                        rev_idx,
+                        max_cred_num,
+                        issuance_by_default,
+                        &mut rev_registry,
+                        &registry_private_key,
+                        &aux_info_va,
+                    ).expect("Error issuing the signature");
+
+                // 3.4 Holder initializes the witness
+                // The VA accumulator scheme does not require witness initialization.
+
+                // 3.5 Holder post-processes the signature (technically a pre-signature).
+                Prover::process_credential_signature_generic(
+                    &mut credential_signature,
+                    &credential_values,
+                    &credential_signature_correctness_proof,
+                    &credential_secrets_blinding_factors,
+                    &credential_public_key,
+                    &credential_correctness_nonce,
+                    Some(&registry_public_key),
+                    Some(&rev_registry),
+                    None, // no witness required
+                ).expect("Error while post-processing signature");
+
+                prover_data.push((rev_idx, credential_values.try_clone().unwrap(),
+                                  credential_signature.try_clone().unwrap(), None));
+            }
+
+            // ******************** 5. Proof Presentation ******************************************
+            // First the verifier generates a nonce for each proof
+            // 5. Create proof presentation
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            let sub_proof_request = get_sub_proof_request();
+            let proofs = gen_proofs_generic(
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                &sub_proof_request,
+                &nonces,
+                &rev_registry,
+                &mut prover_data
+            );
+
+            // ******************** Proof Verification ********************************************
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request,
+                    &credential_schema,
+                    &non_credential_schema,
+                    &credential_public_key,
+                    Some(&registry_public_key),
+                    Some(&rev_registry)
+                ).unwrap();
+
+            for i in 0..proofs.len() {
+                println!("Verification result for proof {} is {}", i,
+                         verifier.verify_generic(&proofs[i], &nonces[i]).unwrap());
+            }
+
+            // 7. ********************** Revoke Credential ****************************************
+            // Now we revoke credentials 1..max_batch_size
+            // Note the differences from the interface in the CKS scheme.
+            // Appropriately we need to "downgrade" generic types to the VA specific types.
+            let revoke_delta = Issuer::update_revocation_registry_va(
+                rev_registry.unwrap_va().unwrap(), // gets &mut ref to underlying rev_reg_cks
+                registry_private_key.unwrap_va().unwrap(),
+                aux_info_va.get_domain(),
+                BTreeSet::<u32>::from_iter((1..=max_batch_size).into_iter()),
+            ).unwrap();
+
+            // 8. ************************** Update Witnesses *************************************
+            // Note that witness update differs substantially from the witness update in CKS scheme.
+            let mut start = Instant::now();
+            for i in 0..prover_data.len() {
+                let rev_idx = prover_data[i].0;
+                // We need to set up the lagrangian coefficients
+                let lagrangian_domain =
+                    LagrangianDomain::from_parts(aux_info_va.get_domain(), &FieldElement::from(rev_idx));
+                // Get mutable access to witness embedded in non-revocation credential.
+                let rev_credential =
+                    prover_data[i].2.unwrap_va().unwrap().r_credential.as_mut().unwrap();
+                rev_credential.witness.update(
+                    &revoke_delta,
+                    &lagrangian_domain.unwrap()
+                ).unwrap();
+            }
+
+            // 9. ************************ Prove and Verify Presentations Again *******************
+
+            // Create proof presentation
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            let sub_proof_request = get_sub_proof_request();
+            let proofs = gen_proofs_generic(
+                &credential_schema,
+                &non_credential_schema,
+                &credential_public_key,
+                &sub_proof_request,
+                &nonces,
+                &rev_registry,
+                &mut prover_data
+            );
+
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request,
+                    &credential_schema,
+                    &non_credential_schema,
+                    &credential_public_key,
+                    Some(&registry_public_key),
+                    Some(&rev_registry)
+                ).unwrap();
+
+            for i in 0..proofs.len() {
+                println!("Verification result for proof {} is {}", i,
+                         verifier.verify_generic(&proofs[i], &nonces[i]).unwrap());
+            }
+
+        }
+
+
+
     }
 
 }

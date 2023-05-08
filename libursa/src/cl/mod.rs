@@ -1369,6 +1369,7 @@ impl NonRevocProofTauList {
 pub type Nonce = BigNumber;
 
 #[derive(Debug)]
+#[cfg_attr(feature="serde", derive(Serialize, Deserialize))]
 pub struct VerifiableCredential {
     pub_key: CredentialPublicKey,
     sub_proof_request: SubProofRequest,
@@ -2006,17 +2007,17 @@ pub enum GenRevocationRegistryDelta {
 }
 
 impl GenRevocationRegistryDelta {
-    pub fn unwrap_cks(&self) -> UrsaCryptoResult<RevocationRegistryDelta> {
+    pub fn unwrap_cks(&self) -> UrsaCryptoResult<&RevocationRegistryDelta> {
         if let GenRevocationRegistryDelta::CKS(rev_reg_cks) = self {
-            Ok(rev_reg_cks.clone())
+            Ok(rev_reg_cks)
         } else {
             Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Not a CKS registry"))
         }
     }
 
-    pub fn unwrap_va(&self) -> UrsaCryptoResult<RevocationRegistryDeltaVA> {
+    pub fn unwrap_va(&self) -> UrsaCryptoResult<&RevocationRegistryDeltaVA> {
         if let GenRevocationRegistryDelta::VA(rev_reg_va) = self {
-            Ok(rev_reg_va.clone())
+            Ok(rev_reg_va)
         } else {
             Err(err_msg(UrsaCryptoErrorKind::InvalidStructure, "Not a VA regisrty"))
         }
@@ -2113,6 +2114,7 @@ pub struct NonRevocationCredentialSignatureVA {
 
 /// Generalized Verifiable Credential
 #[derive(Debug)]
+#[cfg_attr(feature="serde", derive(Serialize, Deserialize))]
 pub struct GenVerifiableCredential {
     pub_key: GenCredentialPublicKey,
     sub_proof_request: SubProofRequest,
