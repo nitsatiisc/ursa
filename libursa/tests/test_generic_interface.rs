@@ -117,6 +117,12 @@ mod test_generic {
         sub_proof_request_builder.finalize().unwrap()
     }
 
+    fn get_sub_proof_request2() -> SubProofRequest {
+        let mut sub_proof_request_builder = Verifier::new_sub_proof_request_builder().unwrap();
+        sub_proof_request_builder.add_revealed_attr("age").unwrap();
+        sub_proof_request_builder.finalize().unwrap()
+    }
+
     type ProverData = (u32, CredentialValues, CredentialSignature, Witness);
     type ProverDataVA = (u32, CredentialValues, CredentialSignatureVA);
     type GenProverData = (u32, CredentialValues, GenCredentialSignature, Option<GenWitness>);
@@ -275,6 +281,84 @@ mod test_generic {
                     &credential_pub_key,
                     Some(&rev_reg),
                     witness.as_ref()
+                ).unwrap();
+            proofs.push(proof_builder.finalize_generic(&nonces[i as usize]).unwrap());
+            total_proving += start.elapsed();
+        }
+
+        println!(
+            "Total witness gen time for {} is {:?}",
+            nonces.len(),
+            total_witness_gen
+        );
+        println!(
+            "Total proving time for {} is {:?}",
+            nonces.len(),
+            total_proving
+        );
+        proofs
+    }
+
+
+    fn gen_proofs_generic_mix(
+        credential_schema_1: &CredentialSchema,
+        credential_schema_2: &CredentialSchema,
+        non_credential_schema: &NonCredentialSchema,
+        credential_pub_key_1: &GenCredentialPublicKey,
+        credential_pub_key_2: &GenCredentialPublicKey,
+        sub_proof_request_1: &SubProofRequest,
+        sub_proof_request_2: &SubProofRequest,
+        nonces: &[Nonce],
+        rev_reg_1: &GenRevocationRegistry,
+        rev_reg_2: &GenRevocationRegistry,
+        prover_data_1: &mut [GenProverData],
+        prover_data_2: &mut [GenProverData]
+    ) -> Vec<GenProof> {
+        let mut proofs = Vec::with_capacity(nonces.len());
+        let mut total_witness_gen = Duration::new(0, 0);
+        let mut total_proving = Duration::new(0, 0);
+        for i in 0..nonces.len() {
+            let (
+                rev_idx_1,
+                ref credential_values_1,
+                ref credential_signature_1,
+                ref witness_1
+            ) = prover_data_1[i as usize];
+
+            let (
+                rev_idx_2,
+                ref credential_values_2,
+                ref credential_signature_2,
+                ref witness_2
+            ) = prover_data_2[i as usize];
+
+            let mut start = Instant::now();
+
+            let mut proof_builder = Prover::new_proof_builder().unwrap();
+            proof_builder.add_common_attribute("master_secret").unwrap();
+
+            start = Instant::now();
+            proof_builder
+                .add_sub_proof_request_generic(
+                    sub_proof_request_1,
+                    &credential_schema_1,
+                    non_credential_schema,
+                    credential_signature_1,
+                    credential_values_1,
+                    &credential_pub_key_1,
+                    Some(&rev_reg_1),
+                    witness_1.as_ref()
+                ).unwrap();
+            proof_builder
+                .add_sub_proof_request_generic(
+                    sub_proof_request_2,
+                    &credential_schema_2,
+                    non_credential_schema,
+                    credential_signature_2,
+                    credential_values_2,
+                    &credential_pub_key_2,
+                    Some(&rev_reg_2),
+                    witness_2.as_ref()
                 ).unwrap();
             proofs.push(proof_builder.finalize_generic(&nonces[i as usize]).unwrap());
             total_proving += start.elapsed();
@@ -2991,6 +3075,292 @@ mod test_generic {
 
         }
 
+        #[test]
+        fn complete_workflow_mixed_credentials()
+        {
+            // In this tutorial we will illustrate the generic interface capability by
+            // verifying two credentials supporting different revocation types as part
+            // of a proof request.
+
+            // ******************* 1. Generate Schema Artefacts ***********************************
+            let credential_schema_1 = get_credential_schema();
+            // above returns a schema object with the following attributes
+            // {"name": BigNumber, "age": BigNumber, "sex": BigNumber, "height": BigNumber }
+            // all the above attributes are known to the issuer.
+            let non_credential_schema = get_non_credential_schema();
+            // above returns a scheme object with
+            // {"master_secret": BigNumber }
+
+            // finally we call the interface to output the artefacts for the schema defined by
+            // credential and non-credential schemas for issuer 1, who uses CKS revocation mechanism
+            // Create credential definition
+            let (credential_public_key_1, credential_private_key_1,
+                credential_key_correctness_proof_1) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema_1,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::CKS
+                ).unwrap();
+
+            // Next we create artefacts for issuer 2 for which uses VA based revocation scheme
+            let credential_schema_2 = get_credential_schema();
+            let (credential_public_key_2, credential_private_key_2,
+                credential_key_correctness_proof_2) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema_2,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::VA
+                ).unwrap();
+
+            let (credential_public_key_1, credential_private_key_1,
+                credential_key_correctness_proof_1) =
+                Issuer::new_credential_def_generic(
+                    &credential_schema_1,
+                    &non_credential_schema,
+                    true,
+                    RevocationMethod::CKS
+                ).unwrap();
+
+
+            // *********************** 2. Generate Registry Artefacts ******************************
+
+            // We first define certain parameters associated with registry
+            let max_cred_num: u32 = 1000;               // maximum number of credentials supported by registry
+            let max_batch_size: u32 = 10;               // maximum size of update
+            let issuance_by_default: bool = true;       // are credentials "accumulated" by default.
+
+            // Create Registry Definition for Issuer 1
+            let (registry_public_key_1, registry_private_key_1, mut rev_registry_1, mut aux_params_1) =
+                Issuer::new_revocation_registry_generic(
+                    &credential_public_key_1,
+                    max_cred_num,
+                    issuance_by_default,
+                    max_batch_size,
+                ).unwrap();
+
+
+            // Create Registry Definition for Issuer 2
+            let (registry_public_key_2, registry_private_key_2, mut rev_registry_2, mut aux_params_2) =
+                Issuer::new_revocation_registry_generic(
+                    &credential_public_key_2,
+                    max_cred_num,
+                    issuance_by_default,
+                    max_batch_size,
+                ).unwrap();
+
+
+            // Setup Initial artefacts for Issuer 1
+            let mut simple_tails_accessor = aux_params_1.unwrap_cks().expect("Unable to generate tails vector");
+            let mut rev_reg_delta_cks = RevocationRegistryDelta::from_parts(
+                None,
+                &rev_registry_1.unwrap_cks().unwrap(),
+                &HashSet::<u32>::from_iter((1..=max_cred_num).into_iter()),
+                &HashSet::<u32>::new(),
+            );
+
+            // Setup Initial artefacts for Issuer 2
+            let mut aux_info_va = aux_params_2.unwrap_va().expect("Unable to obtain evaluation domain");
+
+
+            // 3. ********************** Issue Credentials *****************************************
+            // Issue credentials by Issuer 1
+            let num_signatures: u32 = 10;
+            let mut prover_data_1 : Vec<GenProverData> = Vec::new();
+            // we issue number of credentials (num_signatures), and store information about each credential
+            // in the vector prover_data. This information will be used to create presentations.
+            let master_secret = Prover::new_master_secret().unwrap();
+
+            for rev_idx in 1..=num_signatures {
+                // 3.1 As a first step, the holder chooses the values for the credential.
+                let credential_values = get_credential_values(&master_secret.try_clone().unwrap());
+                // 3.2 Next, the prover blinds the hidden values. It also needs to show proof of knowledge of hidden values, for
+                // which it uses a nonce sent by the issuer.
+                let credential_secrets_nonce = new_nonce().unwrap();
+                let (blinded_credential_secrets, credential_secrets_blinding_factors,
+                    blinded_credential_secrets_correctness_proof) =
+                    Prover::blind_credential_secrets_generic(
+                        &credential_public_key_1,
+                        &credential_key_correctness_proof_1,
+                        &credential_values,
+                        &credential_secrets_nonce,
+                    ).unwrap();
+                // 3.3 Now the holder supplies credential values to the issuer, where
+                // the known values are supplied in plain-text, while hidden values are
+                // supplied in form of blinded_credential_secrets. The holder also generates
+                // a nonce which is used by the issuer to prove correctness of issued signature.
+                let credential_correctness_nonce = new_nonce().unwrap();
+                let (mut credential_signature, credential_signature_correctness_proof, rev_reg_delta) =
+                    Issuer::sign_credential_with_revoc_generic(
+                        &rev_idx.to_string(),
+                        &blinded_credential_secrets,
+                        &blinded_credential_secrets_correctness_proof,
+                        &credential_secrets_nonce,
+                        &credential_correctness_nonce,
+                        &credential_values,
+                        &credential_public_key_1,
+                        &credential_private_key_1,
+                        rev_idx,
+                        max_cred_num,
+                        issuance_by_default,
+                        &mut rev_registry_1,
+                        &registry_private_key_1,
+                        &simple_tails_accessor,
+                    ).expect("Error issuing the signature");
+
+                // 3.4 Holder initializes the witness
+                // In the CKS scheme, the holder has to compute the witness corresponding to
+                // the issued non-revocation signature, using the tails. This is a major difference
+                // from the VA scheme, where the issuer provides initialized witness as part of
+                // the non-revocation signature.
+                let mut witness = Witness::new(
+                    rev_idx,
+                    max_cred_num,
+                    issuance_by_default,
+                    &rev_reg_delta_cks,
+                    &simple_tails_accessor,
+                ).unwrap();
+
+                // upgrade witness back to generic type
+                let mut witness = GenWitness::CKS(witness);
+
+
+                // 3.5 Holder post-processes the signature (technically a pre-signature).
+                Prover::process_credential_signature_generic(
+                    &mut credential_signature,
+                    &credential_values,
+                    &credential_signature_correctness_proof,
+                    &credential_secrets_blinding_factors,
+                    &credential_public_key_1,
+                    &credential_correctness_nonce,
+                    Some(&registry_public_key_1),
+                    Some(&rev_registry_1),
+                    Some(&witness),
+                ).expect("Error while post-processing signature");
+
+                prover_data_1.push((rev_idx, credential_values.try_clone().unwrap(),
+                                  credential_signature.try_clone().unwrap(), Some(witness)));
+
+            }
+
+            // Issue Credentials by Issuer 2
+            let mut prover_data_2 : Vec<GenProverData> = Vec::new();
+            // we issue number of credentials (num_signatures), and store information about each credential
+            // in the vector prover_data. This information will be used to create presentations.
+            for rev_idx in 1..=num_signatures {
+                // 3.1 As a first step, the holder chooses the values for the credential.
+                let credential_values = get_credential_values(&master_secret.try_clone().unwrap());
+                // 3.2 Next, the prover blinds the hidden values. It also needs to show proof of knowledge of hidden values, for
+                // which it uses a nonce sent by the issuer.
+                let credential_secrets_nonce = new_nonce().unwrap();
+                let (blinded_credential_secrets, credential_secrets_blinding_factors,
+                    blinded_credential_secrets_correctness_proof) =
+                    Prover::blind_credential_secrets_generic(
+                        &credential_public_key_2,
+                        &credential_key_correctness_proof_2,
+                        &credential_values,
+                        &credential_secrets_nonce,
+                    ).unwrap();
+
+                // 3.3 Now the holder supplies credential values to the issuer, where
+                // the known values are supplied in plain-text, while hidden values are
+                // supplied in form of blinded_credential_secrets. The holder also generates
+                // a nonce which is used by the issuer to prove correctness of issued signature.
+                let credential_correctness_nonce = new_nonce().unwrap();
+                let (mut credential_signature, credential_signature_correctness_proof, rev_reg_delta) =
+                    Issuer::sign_credential_with_revoc_generic(
+                        &rev_idx.to_string(),
+                        &blinded_credential_secrets,
+                        &blinded_credential_secrets_correctness_proof,
+                        &credential_secrets_nonce,
+                        &credential_correctness_nonce,
+                        &credential_values,
+                        &credential_public_key_2,
+                        &credential_private_key_2,
+                        rev_idx,
+                        max_cred_num,
+                        issuance_by_default,
+                        &mut rev_registry_2,
+                        &registry_private_key_2,
+                        &aux_info_va,
+                    ).expect("Error issuing the VA signature");
+
+                // 3.4 Holder initializes the witness
+                // The VA accumulator scheme does not require witness initialization.
+
+                // 3.5 Holder post-processes the signature (technically a pre-signature).
+                Prover::process_credential_signature_generic(
+                    &mut credential_signature,
+                    &credential_values,
+                    &credential_signature_correctness_proof,
+                    &credential_secrets_blinding_factors,
+                    &credential_public_key_2,
+                    &credential_correctness_nonce,
+                    Some(&registry_public_key_2),
+                    Some(&rev_registry_2),
+                    None, // no witness required
+                ).expect("Error while post-processing signature");
+
+                prover_data_2.push((rev_idx, credential_values.try_clone().unwrap(),
+                                  credential_signature.try_clone().unwrap(), None));
+            }
+
+
+            // Nonces for proof presentations
+            let mut nonces: Vec<Nonce> = Vec::new();
+            for i in 1..=num_signatures {
+                nonces.push(new_nonce().unwrap());
+            }
+
+            // Mixed proof presentation and verification
+            let sub_proof_request_1 = get_sub_proof_request();
+            let sub_proof_request_2 = get_sub_proof_request2();
+            let proofs = gen_proofs_generic_mix(
+                &credential_schema_1,
+                &credential_schema_2,
+                &non_credential_schema,
+                &credential_public_key_1,
+                &credential_public_key_2,
+                &sub_proof_request_1,
+                &sub_proof_request_2,
+                &nonces,
+                &rev_registry_1,
+                &rev_registry_2,
+                &mut prover_data_1,
+                &mut prover_data_2
+            );
+
+            // verify presentations consisting of two subproofs.
+            for i in 0..proofs.len() {
+            let mut verifier = Verifier::new_proof_verifier().unwrap();
+            verifier.add_common_attribute("master_secret").unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request_1,
+                    &credential_schema_1,
+                    &non_credential_schema,
+                    &credential_public_key_1,
+                    Some(&registry_public_key_1),
+                    Some(&rev_registry_1)
+                ).unwrap();
+            verifier
+                .add_sub_proof_request_generic(
+                    &sub_proof_request_2,
+                    &credential_schema_2,
+                    &non_credential_schema,
+                    &credential_public_key_2,
+                    Some(&registry_public_key_2),
+                    Some(&rev_registry_2)
+                ).unwrap();
+
+
+
+                println!("Verification result for proof {} is {}", i,
+                         verifier.verify_generic(&proofs[i as usize], &nonces[i as usize]).unwrap());
+            }
+
+        }
 
 
     }
