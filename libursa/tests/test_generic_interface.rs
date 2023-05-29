@@ -700,7 +700,7 @@ mod test_generic {
             // Basic testing and benchmarking setup
             let credential_schema = get_credential_schema();
             let non_credential_schema = get_non_credential_schema();
-            let max_cred_num = 100u32;
+            let max_cred_num = 1000u32;
             let issuance_by_default = true;
             let max_batch_size = 10u32;
             let num_signatures = 10u32;
@@ -1030,6 +1030,11 @@ mod test_generic {
                     RevocationMethod::VA
                 ).unwrap();
 
+            // Serialize the artefacts
+            write_object("./data_models/credential_public_key.dat", &Some(credential_public_key.try_clone().unwrap())).unwrap();
+
+
+
             // 2. Create Registry Definition
             let (registry_public_key, registry_private_key, mut rev_registry, mut aux_params) =
                 Issuer::new_revocation_registry_generic(
@@ -1040,6 +1045,9 @@ mod test_generic {
                 ).unwrap();
 
             let simple_tails_accessor = aux_params.unwrap_va().unwrap();
+
+            // Serialize the artefacts
+            write_object("./data_models/registry_public_key.dat", &Some(registry_public_key.clone())).unwrap();
 
             // 3. Issue credentials
             let mut prover_data: Vec<GenProverData> = Vec::new();
@@ -1115,6 +1123,9 @@ mod test_generic {
                 &mut prover_data
             );
 
+            write_object("./data_models/credential_signature.dat", &Some(prover_data[0].2.try_clone().unwrap())).unwrap();
+
+
             let mut verifier = Verifier::new_proof_verifier().unwrap();
             verifier
                 .add_sub_proof_request_generic(
@@ -1140,6 +1151,10 @@ mod test_generic {
                  BTreeSet::<u32>::from_iter((1..=max_batch_size).into_iter())
             ).unwrap();
 
+            write_object("./data_models/rev_reg.dat", &Some(rev_registry.clone())).unwrap();
+            write_object("./data_models/rev_reg_delta.dat", &Some(revoke_delta.clone())).unwrap();
+
+
             // Holders update the witness
             for i in 0..prover_data.len() {
                 let rev_idx = prover_data[i].0;
@@ -1153,6 +1168,8 @@ mod test_generic {
                     &ldomain
                 ).unwrap();
             }
+
+
 
             // Create and verify presentations again after revocation
 

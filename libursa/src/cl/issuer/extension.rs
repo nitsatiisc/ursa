@@ -1,4 +1,9 @@
+use k256::pkcs8::der::Encodable;
+use openssl::bn;
+use openssl::bn::*;
+use cl;
 use super::*;
+
 
 impl Issuer {
     /// This extension module contains extensions to the issuer module to support
@@ -250,7 +255,8 @@ impl Issuer {
         )?;
 
         // In the anoncreds whitepaper, `credential context` is denoted by `m2`
-        let cred_context = Issuer::_gen_credential_context(prover_id, Some(rev_idx))?;
+        //let cred_context = Issuer::_gen_credential_context(prover_id, Some(rev_idx))?;
+        let cred_context = cl::BigNumber::from_u32(rev_idx as usize).unwrap();
 
         let (p_cred, q) = Issuer::_new_primary_credential_generic(
             &cred_context,
@@ -454,6 +460,7 @@ impl Issuer {
         if va_registry.revoked.contains(&rev_idx) {
             return Err(err_msg(UrsaCryptoErrorKind::CredentialRevoked, "Credential Revoked"));
         }
+
 
         let cred_context = FieldElement::from(rev_idx);
 

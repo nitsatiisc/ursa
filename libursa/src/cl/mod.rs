@@ -1711,6 +1711,7 @@ impl AuxiliaryParams {
 #[derive(Debug, Clone)]
 pub struct RevocationRegistryVA {
     accum: G1,
+    #[serde(skip)]
     revoked: HashSet<u32>
 }
 
